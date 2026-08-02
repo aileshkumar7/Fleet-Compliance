@@ -1,0 +1,221 @@
+/**
+ * @license
+ * SPDX-License-Identifier: Apache-2.0
+ */
+
+import { Cab, Driver } from '../types';
+
+export interface DocumentAlert {
+  docName: string;
+  fieldName: string;
+  expiryDateStr: string;
+  daysRemaining: number;
+  status: 'expired' | 'expiring_soon' | 'valid';
+  message: string;
+}
+
+export interface EntityExpiryAnalysis<T> {
+  entity: T;
+  hasAlert: boolean;
+  worstStatus: 'expired' | 'expiring_soon' | 'valid';
+  minDaysRemaining: number;
+  alerts: DocumentAlert[];
+}
+
+/**
+ * Parses a date string robustly (handles YYYY-MM-DD, DD/MM/YYYY, ISO, etc.)
+ */
+export function parseExpiryDate(dateStr: string | null | undefined): Date | null {
+  if (!dateStr || typeof dateStr !== 'string') return null;
+  const trimmed = dateStr.trim();
+  if (!trimmed || trimmed === 'N/A' || trimmed.toLowerCase() === 'null') return null;
+
+  // Try DD/MM/YYYY or DD-MM-YYYY
+  const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  if (ddmmyyyyMatch) {
+    const day = parseInt(ddmmyyyyMatch[1], 10);
+    const month = parseInt(ddmmyyyyMatch[2], 10) - 1;
+    const year = parseInt(ddmmyyyyMatch[3], 10);
+    const d = new Date(year, month, day);
+    if (!isNaN(d.getTime())) return d;
+  }
+
+  // Try standard Date parsing
+  const parsed = new Date(trimmed);
+  if (!isNaN(parsed.getTime())) {
+    return parsed;
+  }
+
+  return null;
+}
+
+/**
+ * Calculates days remaining from today at midnight
+ */
+export function getDaysRemaining(expiryDate: Date): number {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+
+  const exp = new Date(expiryDate);
+  exp.setHours(0, 0, 0, 0);
+
+  const diffMs = exp.getTime() - today.getTime();
+  return Math.round(diffMs / (1000 * 60 * 60 * 24));
+}
+
+/**
+ * Evaluates a single date string against the expiry rules
+ */
+export function getDocumentStatus(docName: string, dateStr: string | null | undefined): {
+  status: 'expired' | 'expiring_soon' | 'valid';
+  daysRemaining: number | null;
+  message: string;
+} {
+  const parsedDate = parseExpiryDate(dateStr);
+  if (!parsedDate) {
+    return {
+      status: 'valid',
+      daysRemaining: null,
+      message: 'No Expiry Recorded'
+    };
+  }
+
+  const days = getDaysRemaining(parsedDate);
+  if (days < 0) {
+    const absDays = Math.abs(days);
+    return {
+      status: 'expired',
+      daysRemaining: days,
+      message: `Expired (${absDays === 1 ? '1 day ago' : `${absDays} days ago`})`
+    };
+  } else if (days <= 10) {
+    return {
+      status: 'expiring_soon',
+      daysRemaining: days,
+      message: days === 0 ? 'Expires today' : `Expires in ${days} ${days === 1 ? 'day' : 'days'}`
+    };
+  } else {
+    return {
+      status: 'valid',
+      daysRemaining: days,
+      message: `Valid (${days} days remaining)`
+    };
+  }
+}
+
+export function evaluateDateAlert(docName: string, fieldName: string, dateStr: string | null | undefined): DocumentAlert | null {
+  const parsedDate = parseExpiryDate(dateStr);
+  if (!parsedDate) return null;
+
+  const days = getDaysRemaining(parsedDate);
+
+  if (days < 0) {
+    const absDays = Math.abs(days);
+    return {
+      docName,
+      fieldName,
+      expiryDateStr: dateStr || '',
+      daysRemaining: days,
+      status: 'expired',
+      message: `${docName} expired ${absDays === 1 ? '1 day ago' : `${absDays} days ago`}`
+    };
+  } else if (days <= 10) {
+    return {
+      docName,
+      fieldName,
+      expiryDateStr: dateStr || '',
+      daysRemaining: days,
+      status: 'expiring_soon',
+      message: days === 0 ? `${docName} expires today` : `${docName} expires in ${days} ${days === 1 ? 'day' : 'days'}`
+    };
+  }
+
+  return null; // Valid (> 10 days remaining)
+}
+
+/**
+ * Evaluates all 6 expiry fields for a Cab
+ */
+export function analyzeCabExpiry(cab: Cab): EntityExpiryAnalysis<Cab> {
+  const fieldsToCheck: { docName: string; fieldName: keyof Cab }[] = [
+    { docName: 'Insurance', fieldName: 'insuranceExpiryDate' },
+    { docName: 'Pollution Certificate', fieldName: 'pollutionCertificateExpiryDate' },
+    { docName: 'Permit', fieldName: 'permitExpiryDate' },
+    { docName: 'Road Tax', fieldName: 'roadTaxExpiryDate' },
+    { docName: 'Fitness', fieldName: 'fitnessExpiryDate' },
+    { docName: 'Vehicle Service', fieldName: 'vehicleServiceExpiryDate' },
+  ];
+
+  const alerts: DocumentAlert[] = [];
+  let minDaysRemaining = Infinity;
+  let hasExpired = false;
+
+  for (const item of fieldsToCheck) {
+    const val = cab[item.fieldName] as string;
+    const alert = evaluateDateAlert(item.docName, item.fieldName as string, val);
+    if (alert) {
+      alerts.push(alert);
+      if (alert.daysRemaining < minDaysRemaining) {
+        minDaysRemaining = alert.daysRemaining;
+      }
+      if (alert.status === 'expired') {
+        hasExpired = true;
+      }
+    }
+  }
+
+  const hasAlert = alerts.length > 0;
+  const worstStatus = hasExpired ? 'expired' : hasAlert ? 'expiring_soon' : 'valid';
+
+  return {
+    entity: cab,
+    hasAlert,
+    worstStatus,
+    minDaysRemaining: minDaysRemaining === Infinity ? 9999 : minDaysRemaining,
+    alerts
+  };
+}
+
+/**
+ * Evaluates all 7 expiry fields for a Driver
+ */
+export function analyzeDriverExpiry(driver: Driver): EntityExpiryAnalysis<Driver> {
+  const fieldsToCheck: { docName: string; fieldName: keyof Driver }[] = [
+    { docName: 'Driver License', fieldName: 'driverLicenseExpiryDate' },
+    { docName: 'Badge', fieldName: 'badgeExpiryDate' },
+    { docName: 'BGV', fieldName: 'bgvExpiryDate' },
+    { docName: 'Police Verification', fieldName: 'policeVerificationExpiryDate' },
+    { docName: 'Medical Verification', fieldName: 'medicalVerificationExpiryDate' },
+    { docName: 'Training Verification', fieldName: 'trainingVerificationExpiryDate' },
+    { docName: 'Eye Test', fieldName: 'eyeTestExpiryDate' },
+  ];
+
+  const alerts: DocumentAlert[] = [];
+  let minDaysRemaining = Infinity;
+  let hasExpired = false;
+
+  for (const item of fieldsToCheck) {
+    const val = driver[item.fieldName] as string;
+    const alert = evaluateDateAlert(item.docName, item.fieldName as string, val);
+    if (alert) {
+      alerts.push(alert);
+      if (alert.daysRemaining < minDaysRemaining) {
+        minDaysRemaining = alert.daysRemaining;
+      }
+      if (alert.status === 'expired') {
+        hasExpired = true;
+      }
+    }
+  }
+
+  const hasAlert = alerts.length > 0;
+  const worstStatus = hasExpired ? 'expired' : hasAlert ? 'expiring_soon' : 'valid';
+
+  return {
+    entity: driver,
+    hasAlert,
+    worstStatus,
+    minDaysRemaining: minDaysRemaining === Infinity ? 9999 : minDaysRemaining,
+    alerts
+  };
+}

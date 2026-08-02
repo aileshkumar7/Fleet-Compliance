@@ -1,0 +1,6 @@
+{
+  "name": "Fleet Compliance Manager",
+  "description": "Fleet compliance management system for tracking drivers, cabs, clients, and document verification.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,132 @@
+{
+  "entities": {
+    "drivers": {
+      "title": "Drivers",
+      "description": "Driver records with compliance and verification tracking",
+      "properties": {
+        "name": { "type": "string" },
+        "clientName": { "type": "string" },
+        "overallComplianceStatus": { "type": "string" },
+        "city": { "type": "string" },
+        "offices": { "type": "string" },
+        "driverLicenseNumber": { "type": "string" },
+        "driverLicenseExpiryDate": { "type": "string" },
+        "driverId": { "type": "string" },
+        "inductionDate": { "type": "string" },
+        "badgeNumber": { "type": "string" },
+        "badgeExpiryDate": { "type": "string" },
+        "driverAge": { "type": "number" },
+        "backgroundCheckStatus": { "type": "string" },
+        "bgvExpiryDate": { "type": "string" },
+        "policeVerificationStatus": { "type": "string" },
+        "policeVerificationExpiryDate": { "type": "string" },
+        "overallApprovalStatus": { "type": "string" },
+        "phoneNumbers": { "type": "string" },
+        "address": { "type": "string" },
+        "currentAddress": { "type": "string" },
+        "govtIdType": { "type": "string" },
+        "govtIdNumber": { "type": "string" },
+        "medicalVerificationStatus": { "type": "string" },
+        "medicalVerificationExpiryDate": { "type": "string" },
+        "trainingVerificationStatus": { "type": "string" },
+        "trainingVerificationExpiryDate": { "type": "string" },
+        "comments": { "type": "string" },
+        "dateOfBirth": { "type": "string" },
+        "deactivationDate": { "type": "string" },
+        "profileImageUrl": { "type": "string" },
+        "louDocumentUrl": { "type": "string" },
+        "eyeTestExpiryDate": { "type": "string" },
+        "approvedBy": { "type": "string" },
+        "approvedTime": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdTime": { "type": "string" },
+        "updatedBy": { "type": "string" },
+        "updatedTime": { "type": "string" },
+        "documentsUploaded": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "status": { "type": "string" },
+        "clientId": { "type": "string" }
+      }
+    },
+    "cabs": {
+      "title": "Cabs",
+      "description": "Vehicle records and compliance document tracking",
+      "properties": {
+        "etsVehicleId": { "type": "string" },
+        "registrationNumber": { "type": "string" },
+        "clientName": { "type": "string" },
+        "vehicleType": { "type": "string" },
+        "overallComplianceStatus": { "type": "string" },
+        "manufacturingDate": { "type": "string" },
+        "registrationDate": { "type": "string" },
+        "ageYears": { "type": "number" },
+        "inductionDate": { "type": "string" },
+        "durationYears": { "type": "number" },
+        "insuranceExpiryDate": { "type": "string" },
+        "pollutionCertificateExpiryDate": { "type": "string" },
+        "permitExpiryDate": { "type": "string" },
+        "roadTaxExpiryDate": { "type": "string" },
+        "fitnessExpiryDate": { "type": "string" },
+        "vehicleServiceExpiryDate": { "type": "string" },
+        "ehs": { "type": "string" },
+        "documentsUploaded": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "comments": { "type": "string" },
+        "overallApprovalStatus": { "type": "string" },
+        "fuelType": { "type": "string" },
+        "vehicleOwnership": { "type": "string" },
+        "permitType": { "type": "string" },
+        "deactivationDate": { "type": "string" },
+        "otherDocuments": { "type": "string" },
+        "approvedBy": { "type": "string" },
+        "approvedTime": { "type": "string" },
+        "createdBy": { "type": "string" },
+        "createdTime": { "type": "string" },
+        "updatedBy": { "type": "string" },
+        "updatedTime": { "type": "string" },
+        "contractName": { "type": "string" },
+        "driverName": { "type": "string" },
+        "driverMobileNumber": { "type": "string" },
+        "driverComplianceStatus": { "type": "string" },
+        "status": { "type": "string" },
+        "clientId": { "type": "string" }
+      }
+    },
+    "clients": {
+      "title": "Clients",
+      "description": "Client entities managing fleet units",
+      "properties": {
+        "clientId": { "type": "string" },
+        "clientName": { "type": "string" }
+      }
+    },
+    "uploadLogs": {
+      "title": "Upload Logs",
+      "description": "Audit trail for document and data file upload operations",
+      "properties": {
+        "fileName": { "type": "string" },
+        "uploadedBy": { "type": "string" },
+        "uploadedAt": { "type": "string" },
+        "recordCounts": { "type": "number" }
+      }
+    },
+    "users": {
+      "title": "Users",
+      "description": "User profiles with roles and client access permissions",
+      "properties": {
+        "uid": { "type": "string" },
+        "name": { "type": "string" },
+        "email": { "type": "string" },
+        "role": { "type": "string" },
+        "assignedClientIds": { "type": "array", "items": { "type": "string" } },
+        "permissions": { "type": "object" },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string" }
+      }
+    }
+  }
+}
