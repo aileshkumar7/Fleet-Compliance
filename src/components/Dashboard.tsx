@@ -9,6 +9,8 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { Driver, Cab, Client, UploadLog } from '../types';
 import { analyzeCabExpiry, analyzeDriverExpiry } from '../utils/expiryEngine';
+import { ensureCompleteDriversDataset } from '../utils/seedDriversData';
+import { matchesCabSearch, matchesDriverSearch } from '../utils/searchUtils';
 import { RecordDetailView } from './RecordDetailView';
 import { ReportDownloadModal } from './ReportDownloadModal';
 import { 
@@ -77,18 +79,40 @@ export const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => {
     setIsLoading(true);
 
-    const isAllClients = isAdmin || userProfile?.assignedClientIds?.includes('all');
-    const userClientId = userProfile?.clientId || userProfile?.assignedClientIds?.[0] || '';
+    const userClientKeys = Array.from(new Set([
+      userProfile?.clientId,
+      ...(userProfile?.assignedClientIds || [])
+    ].filter(Boolean).map(s => String(s).trim().toLowerCase())));
+
+    const isAllClients = isAdmin || userClientKeys.includes('all');
+
+    const isAccessible = (item: { clientId?: string; clientName?: string }) => {
+      if (isAllClients) return true;
+      if (userClientKeys.length === 0) return true;
+      const cId = (item.clientId || '').trim().toLowerCase();
+      const cName = (item.clientName || '').trim().toLowerCase();
+      return userClientKeys.some(k => k === cId || k === cName);
+    };
 
     // 1. Subscribe to drivers
     const unsubscribeDrivers = onSnapshot(collection(db, 'drivers'), (snapshot) => {
+      if (snapshot.size < 89) {
+        ensureCompleteDriversDataset();
+      }
+
       const items: Driver[] = [];
       snapshot.forEach(docSnap => {
-        items.push({ id: docSnap.id, ...docSnap.data() } as Driver);
+        const data = docSnap.data();
+        items.push({ 
+          id: docSnap.id, 
+          ...data,
+          name: data.name || data.driverName || 'N/A',
+          driverId: data.driverId || data.id || 'N/A',
+          phoneNumbers: data.phoneNumbers || data.phone || data.mobile || data.driverMobileNumber || '',
+          clientName: data.clientName || data.client || 'N/A',
+        } as Driver);
       });
-      const accessible = isAllClients
-        ? items
-        : items.filter(d => (d.clientId || '').toLowerCase() === userClientId.toLowerCase() || (d.clientName || '').toLowerCase() === userClientId.toLowerCase());
+      const accessible = items.filter(isAccessible);
       setDrivers(accessible);
     }, (err) => console.error('Error listening to drivers:', err));
 
@@ -96,11 +120,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
     const unsubscribeCabs = onSnapshot(collection(db, 'cabs'), (snapshot) => {
       const items: Cab[] = [];
       snapshot.forEach(docSnap => {
-        items.push({ id: docSnap.id, ...docSnap.data() } as Cab);
+        const data = docSnap.data();
+        items.push({ 
+          id: docSnap.id, 
+          ...data,
+          registrationNumber: data.registrationNumber || data.regNumber || data.vehicleNumber || 'N/A',
+          etsVehicleId: data.etsVehicleId || data.vehicleId || data.id || 'N/A',
+          clientName: data.clientName || data.client || 'N/A',
+        } as Cab);
       });
-      const accessible = isAllClients
-        ? items
-        : items.filter(c => (c.clientId || '').toLowerCase() === userClientId.toLowerCase() || (c.clientName || '').toLowerCase() === userClientId.toLowerCase());
+      const accessible = items.filter(isAccessible);
       setCabs(accessible);
     }, (err) => console.error('Error listening to cabs:', err));
 
@@ -110,9 +139,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       snapshot.forEach(docSnap => {
         items.push({ id: docSnap.id, ...docSnap.data() } as Client);
       });
-      const accessible = isAllClients
-        ? items
-        : items.filter(c => (c.clientId || '').toLowerCase() === userClientId.toLowerCase() || (c.clientName || '').toLowerCase() === userClientId.toLowerCase());
+      const accessible = items.filter(isAccessible);
       setClients(accessible);
     }, (err) => console.error('Error listening to clients:', err));
 
@@ -156,20 +183,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const activeDriversCount = scopedDrivers.filter(d => (d.status || '').toLowerCase() === 'active').length;
   const inactiveDriversCount = scopedDrivers.filter(d => (d.status || '').toLowerCase() === 'inactive').length;
 
-  const filteredCabs = scopedCabs.filter(c => {
-    const reg = (c.registrationNumber || '').toLowerCase();
-    const ets = (c.etsVehicleId || '').toLowerCase();
-    const queryStr = searchTerm.toLowerCase().trim();
-    return !queryStr || reg.includes(queryStr) || ets.includes(queryStr);
-  });
+  const filteredCabs = scopedCabs.filter(c => matchesCabSearch(c, searchTerm));
 
-  const filteredDrivers = scopedDrivers.filter(d => {
-    const name = (d.name || '').toLowerCase();
-    const license = (d.driverLicenseNumber || '').toLowerCase();
-    const id = (d.driverId || '').toLowerCase();
-    const queryStr = searchTerm.toLowerCase().trim();
-    return !queryStr || name.includes(queryStr) || license.includes(queryStr) || id.includes(queryStr);
-  });
+  const filteredDrivers = scopedDrivers.filter(d => matchesDriverSearch(d, searchTerm, scopedCabs));
 
   const activeCabs = filteredCabs.filter(c => (c.status || '').toLowerCase() === 'active');
   const inactiveCabs = filteredCabs.filter(c => (c.status || '').toLowerCase() === 'inactive');
@@ -423,7 +439,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           />
         </div>
 
-        <div className="flex items-center gap-3 w-full sm:w-auto justify-end">
+        <div className="flex items-center gap-3 w-full sm:w-auto justify-end flex-wrap">
           {/* Client Filter Dropdown for Admin, locked badge for User */}
           {isAdmin ? (
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs">

@@ -4,11 +4,12 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { collection, getDocs, query } from 'firebase/firestore';
+import { collection, onSnapshot, query } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { Cab, Client } from '../types';
 import { analyzeCabExpiry } from '../utils/expiryEngine';
+import { matchesCabSearch } from '../utils/searchUtils';
 import { Truck, Search, RefreshCw, ShieldAlert, ShieldCheck, Calendar, Fuel, User, AlertTriangle, Building2 } from 'lucide-react';
 
 export const CabsList: React.FC = () => {
@@ -20,52 +21,71 @@ export const CabsList: React.FC = () => {
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
 
-  const fetchCabs = async () => {
+  const fetchCabs = () => {
     setIsLoading(true);
-    try {
-      const q = query(collection(db, 'cabs'));
-      const snap = await getDocs(q);
+
+    const userClientKeys = Array.from(new Set([
+      userProfile?.clientId,
+      ...(userProfile?.assignedClientIds || [])
+    ].filter(Boolean).map(s => String(s).trim().toLowerCase())));
+
+    const isAllClients = isAdmin || userClientKeys.includes('all');
+
+    const isAccessible = (item: { clientId?: string; clientName?: string }) => {
+      if (isAllClients) return true;
+      if (userClientKeys.length === 0) return true;
+      const cId = (item.clientId || '').trim().toLowerCase();
+      const cName = (item.clientName || '').trim().toLowerCase();
+      return userClientKeys.some(k => k === cId || k === cName);
+    };
+
+    const q = query(collection(db, 'cabs'));
+    const unsubscribeCabs = onSnapshot(q, (snap) => {
       const items: Cab[] = [];
       snap.forEach(docSnap => {
-        items.push({ id: docSnap.id, ...docSnap.data() } as Cab);
+        const data = docSnap.data();
+        items.push({ 
+          id: docSnap.id, 
+          ...data,
+          registrationNumber: data.registrationNumber || data.regNumber || data.vehicleNumber || 'N/A',
+          etsVehicleId: data.etsVehicleId || data.vehicleId || data.id || 'N/A',
+          clientName: data.clientName || data.client || 'N/A',
+        } as Cab);
       });
 
-      const clientSnap = await getDocs(collection(db, 'clients'));
+      const accessible = items.filter(isAccessible);
+      setCabs(accessible);
+      setIsLoading(false);
+    }, (err) => {
+      console.error('Error listening to cabs:', err);
+      setIsLoading(false);
+    });
+
+    const unsubscribeClients = onSnapshot(collection(db, 'clients'), (clientSnap) => {
       const cItems: Client[] = [];
       clientSnap.forEach(c => cItems.push({ id: c.id, ...c.data() } as Client));
       setClients(cItems);
+    }, (err) => console.error('Error listening to clients in CabsList:', err));
 
-      // Filter by assigned client if standard user
-      const isAllClients = isAdmin || userProfile?.assignedClientIds?.includes('all');
-      const userClientId = userProfile?.clientId || userProfile?.assignedClientIds?.[0] || '';
-
-      const accessible = isAllClients
-        ? items
-        : items.filter(c => (c.clientId || '').toLowerCase() === userClientId.toLowerCase() || (c.clientName || '').toLowerCase() === userClientId.toLowerCase());
-
-      setCabs(accessible);
-    } catch (err) {
-      console.error('Error fetching cabs:', err);
-    } finally {
-      setIsLoading(false);
-    }
+    return () => {
+      unsubscribeCabs();
+      unsubscribeClients();
+    };
   };
 
   useEffect(() => {
-    fetchCabs();
-  }, [userProfile]);
+    const cleanup = fetchCabs();
+    return () => {
+      if (cleanup) cleanup();
+    };
+  }, [userProfile, isAdmin]);
 
   const filteredCabs = cabs.filter(c => {
     const matchesClient = selectedClient === 'all' || 
       (c.clientId || '').toLowerCase() === selectedClient.toLowerCase() ||
       (c.clientName || '').toLowerCase() === selectedClient.toLowerCase();
 
-    const matchesSearch = 
-      (c.registrationNumber || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (c.etsVehicleId || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (c.clientName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (c.vehicleType || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (c.driverName || '').toLowerCase().includes(searchTerm.toLowerCase());
+    const matchesSearch = matchesCabSearch(c, searchTerm);
 
     if (statusFilter === 'all') return matchesSearch && matchesClient;
     return matchesSearch && matchesClient && (c.status || '').toLowerCase() === statusFilter;

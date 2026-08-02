@@ -30,7 +30,11 @@ export function parseDateValue(val: any): string {
 
   if (val instanceof Date) {
     if (isNaN(val.getTime())) return '';
-    return val.toISOString().split('T')[0];
+    // Use local Date components to prevent UTC timezone date shifts
+    const y = val.getFullYear();
+    const m = String(val.getMonth() + 1).padStart(2, '0');
+    const d = String(val.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
 
   // Handle Excel date serial numbers
@@ -45,9 +49,9 @@ export function parseDateValue(val: any): string {
   }
 
   const str = String(val).trim();
-  if (!str) return '';
+  if (!str || str === 'N/A' || str.toLowerCase() === 'null') return '';
 
-  // Match DD/MM/YYYY or DD-MM-YYYY
+  // Match DD/MM/YYYY or DD-MM-YYYY or D/M/YYYY
   const dmy = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
   if (dmy) {
     const day = dmy[1].padStart(2, '0');
@@ -65,10 +69,23 @@ export function parseDateValue(val: any): string {
     return `${year}-${month}-${day}`;
   }
 
-  // Fallback date parsing
+  // Match DD/MM/YY or DD-MM-YY
+  const dmyShort = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);
+  if (dmyShort) {
+    const day = dmyShort[1].padStart(2, '0');
+    const month = dmyShort[2].padStart(2, '0');
+    let year = parseInt(dmyShort[3], 10);
+    year = year < 50 ? 2000 + year : 1900 + year;
+    return `${year}-${month}-${day}`;
+  }
+
+  // Fallback date parsing using local components
   const parsedDate = new Date(str);
   if (!isNaN(parsedDate.getTime())) {
-    return parsedDate.toISOString().split('T')[0];
+    const y = parsedDate.getFullYear();
+    const m = String(parsedDate.getMonth() + 1).padStart(2, '0');
+    const d = String(parsedDate.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
   }
 
   return str;
@@ -101,53 +118,132 @@ function alphaNumKey(str: string): string {
 const DRIVER_FIELD_MAP: Record<string, keyof Driver> = {
   name: 'name',
   drivername: 'name',
+  fullname: 'name',
+  driverfullname: 'name',
+
   clientname: 'clientName',
+  client: 'clientName',
+  vendorname: 'clientName',
+  accountname: 'clientName',
+
   overallcompliancestatus: 'overallComplianceStatus',
   compliancestatus: 'overallComplianceStatus',
+  overallcompliance: 'overallComplianceStatus',
+
   city: 'city',
   offices: 'offices',
   office: 'offices',
+  location: 'offices',
+
   driverlicensenumber: 'driverLicenseNumber',
   dlnumber: 'driverLicenseNumber',
   licensenumber: 'driverLicenseNumber',
+  driverlicence: 'driverLicenseNumber',
+  driverlicense: 'driverLicenseNumber',
+  dlno: 'driverLicenseNumber',
+
   driverlicenseexpirydate: 'driverLicenseExpiryDate',
+  driverlicenceexpirydate: 'driverLicenseExpiryDate',
   dlexpiry: 'driverLicenseExpiryDate',
   dlexpirydate: 'driverLicenseExpiryDate',
+  licenseexpirydate: 'driverLicenseExpiryDate',
+  licenceexpirydate: 'driverLicenseExpiryDate',
+
   driverid: 'driverId',
+  driveridnumber: 'driverId',
+  drivercode: 'driverId',
+  driverno: 'driverId',
+  drivernumber: 'driverId',
   id: 'driverId',
+  empid: 'driverId',
+  employeeid: 'driverId',
+
   inductiondate: 'inductionDate',
+  dateofinduction: 'inductionDate',
+
   badgenumber: 'badgeNumber',
+  badgeno: 'badgeNumber',
+  badge: 'badgeNumber',
+
   badgeexpirydate: 'badgeExpiryDate',
+  badgeexpiry: 'badgeExpiryDate',
+  badgeexpirationdate: 'badgeExpiryDate',
+
   driverage: 'driverAge',
   age: 'driverAge',
+  dateofbirth: 'dateOfBirth',
+  dob: 'dateOfBirth',
+
   backgroundcheckstatus: 'backgroundCheckStatus',
   bgvstatus: 'backgroundCheckStatus',
+  backgroundcheck: 'backgroundCheckStatus',
+  bgv: 'backgroundCheckStatus',
+
   bgvexpirydate: 'bgvExpiryDate',
+  bgvexpiry: 'bgvExpiryDate',
+  bgvexpirationdate: 'bgvExpiryDate',
+  backgroundcheckexpirydate: 'bgvExpiryDate',
+
   policeverificationstatus: 'policeVerificationStatus',
   pvstatus: 'policeVerificationStatus',
+  policeverification: 'policeVerificationStatus',
+
   policeverificationexpirydate: 'policeVerificationExpiryDate',
   pvexpirydate: 'policeVerificationExpiryDate',
+  pvexpiry: 'policeVerificationExpiryDate',
+  policeverificationexpiry: 'policeVerificationExpiryDate',
+
   overallapprovalstatus: 'overallApprovalStatus',
   approvalstatus: 'overallApprovalStatus',
+
   phonenumbers: 'phoneNumbers',
   phone: 'phoneNumbers',
   phonenumber: 'phoneNumbers',
   mobilenumber: 'phoneNumbers',
+  mobile: 'phoneNumbers',
+  contactnumber: 'phoneNumbers',
+
   address: 'address',
   currentaddress: 'currentAddress',
+
   govtidtype: 'govtIdType',
   govtidnumber: 'govtIdNumber',
+  govtid: 'govtIdNumber',
+
   medicalverificationstatus: 'medicalVerificationStatus',
+  medicalstatus: 'medicalVerificationStatus',
+
   medicalverificationexpirydate: 'medicalVerificationExpiryDate',
+  medicalexpirydate: 'medicalVerificationExpiryDate',
+  medicalexpiry: 'medicalVerificationExpiryDate',
+  medicalverificationexpiry: 'medicalVerificationExpiryDate',
+
   trainingverificationstatus: 'trainingVerificationStatus',
+  trainingstatus: 'trainingVerificationStatus',
+
   trainingverificationexpirydate: 'trainingVerificationExpiryDate',
-  comments: 'comments',
-  dateofbirth: 'dateOfBirth',
-  dob: 'dateOfBirth',
+  trainingexpirydate: 'trainingVerificationExpiryDate',
+  trainingexpiry: 'trainingVerificationExpiryDate',
+  trainingverificationexpiry: 'trainingVerificationExpiryDate',
+
+  eyetestexpirydate: 'eyeTestExpiryDate',
+  eyetestexpiry: 'eyeTestExpiryDate',
+  eyecheckexpirydate: 'eyeTestExpiryDate',
+
+  status: 'status',
+  driverstatus: 'status',
+
+  inactivityreason: 'inactivityReason',
+  reasonforinactivity: 'inactivityReason',
+  deactivationreason: 'inactivityReason',
+  reasonforinactiveness: 'inactivityReason',
+  inactivenessreason: 'inactivityReason',
+  reason: 'inactivityReason',
+
   deactivationdate: 'deactivationDate',
   profileimageurl: 'profileImageUrl',
   loudocumenturl: 'louDocumentUrl',
-  eyetestexpirydate: 'eyeTestExpiryDate',
+  comments: 'comments',
   approvedby: 'approvedBy',
   approvedtime: 'approvedTime',
   createdby: 'createdBy',
@@ -155,7 +251,6 @@ const DRIVER_FIELD_MAP: Record<string, keyof Driver> = {
   updatedby: 'updatedBy',
   updatedtime: 'updatedTime',
   documentsuploaded: 'documentsUploaded',
-  status: 'status',
   clientid: 'clientId',
 };
 
@@ -262,6 +357,7 @@ export async function processDataSheetUpload(
   };
 
   const uploadTimestamp = new Date().toISOString();
+  const uploadBatchId = 'batch-' + Date.now();
   const uploadChanges: UploadChangeRecord[] = [];
 
   // Locate the 4 target sheets
@@ -373,8 +469,8 @@ export async function processDataSheetUpload(
         if (overrideClientName) driverData.clientName = overrideClientName;
       }
       if (!driverData.clientId) {
-        driverData.clientId = 'CL-01';
-        if (!driverData.clientName) driverData.clientName = 'TechCorp Inc';
+        driverData.clientId = 'CL-AIRINDIA';
+        if (!driverData.clientName) driverData.clientName = 'Air India T3';
       }
 
       // Collect client information if present
@@ -436,6 +532,8 @@ export async function processDataSheetUpload(
             ...driverData,
             updatedBy: uploadedBy || 'Admin',
             updatedTime: uploadTimestamp,
+            uploadBatchId,
+            uploadBatchFileName: file.name,
           });
           result.driversUpdated++;
         } else {
@@ -482,6 +580,8 @@ export async function processDataSheetUpload(
             documentsUploaded: driverData.documentsUploaded || [],
             status,
             clientId: driverData.clientId || '',
+            uploadBatchId,
+            uploadBatchFileName: file.name,
           });
 
           if (driverId) {
@@ -563,8 +663,8 @@ export async function processDataSheetUpload(
         if (overrideClientName) cabData.clientName = overrideClientName;
       }
       if (!cabData.clientId) {
-        cabData.clientId = 'CL-01';
-        if (!cabData.clientName) cabData.clientName = 'TechCorp Inc';
+        cabData.clientId = 'CL-AIRINDIA';
+        if (!cabData.clientName) cabData.clientName = 'Air India T3';
       }
 
       if (cabData.clientId && cabData.clientName) {
@@ -624,6 +724,8 @@ export async function processDataSheetUpload(
             ...cabData,
             updatedBy: uploadedBy || 'Admin',
             updatedTime: uploadTimestamp,
+            uploadBatchId,
+            uploadBatchFileName: file.name,
           });
           result.cabsUpdated++;
         } else {
@@ -665,6 +767,8 @@ export async function processDataSheetUpload(
             driverComplianceStatus: cabData.driverComplianceStatus || 'Pending',
             status,
             clientId: cabData.clientId || '',
+            uploadBatchId,
+            uploadBatchFileName: file.name,
           });
 
           if (etsVehicleId) cabsMapByEts.set(etsVehicleId.toLowerCase(), { id: newDocRef.id, data: cabData });
@@ -720,6 +824,7 @@ export async function processDataSheetUpload(
   // Write entry to uploadLogs
   try {
     await addDoc(collection(db, 'uploadLogs'), {
+      batchId: uploadBatchId,
       fileName: file.name,
       uploadedBy,
       uploadedAt: uploadTimestamp,
@@ -768,8 +873,8 @@ export function generateSampleDataSheetTemplate() {
     {
       driverId: 'DR-101',
       name: 'Rajesh Kumar',
-      clientName: 'TechCorp Inc',
-      clientId: 'CL-01',
+      clientName: 'Air India T3',
+      clientId: 'CL-AIRINDIA',
       overallComplianceStatus: 'Compliant',
       city: 'Bangalore',
       offices: 'ECity Phase 1',
@@ -807,8 +912,8 @@ export function generateSampleDataSheetTemplate() {
     {
       driverId: 'DR-902',
       name: 'Suresh Patil',
-      clientName: 'Global Logistics',
-      clientId: 'CL-02',
+      clientName: 'Air India T3',
+      clientId: 'CL-AIRINDIA',
       overallComplianceStatus: 'Non-Compliant',
       city: 'Bangalore',
       offices: 'Whitefield',
@@ -846,8 +951,8 @@ export function generateSampleDataSheetTemplate() {
     {
       etsVehicleId: 'CAB-2001',
       registrationNumber: 'KA-01-MJ-4521',
-      clientName: 'TechCorp Inc',
-      clientId: 'CL-01',
+      clientName: 'Air India T3',
+      clientId: 'CL-AIRINDIA',
       vehicleType: 'Sedan (Dzire)',
       overallComplianceStatus: 'Compliant',
       manufacturingDate: '10/05/2021',
@@ -878,8 +983,8 @@ export function generateSampleDataSheetTemplate() {
     {
       etsVehicleId: 'CAB-9901',
       registrationNumber: 'KA-05-MH-8812',
-      clientName: 'Alpha Retail',
-      clientId: 'CL-03',
+      clientName: 'Air India T3',
+      clientId: 'CL-AIRINDIA',
       vehicleType: 'SUV (Ertiga)',
       overallComplianceStatus: 'Non-Compliant',
       manufacturingDate: '01/01/2016',

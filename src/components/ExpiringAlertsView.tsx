@@ -13,6 +13,7 @@ import {
   analyzeDriverExpiry, 
   EntityExpiryAnalysis 
 } from '../utils/expiryEngine';
+import { matchesCabSearch, matchesDriverSearch } from '../utils/searchUtils';
 import { 
   AlertTriangle, 
   Truck, 
@@ -48,31 +49,53 @@ export const ExpiringAlertsView: React.FC = () => {
   useEffect(() => {
     setIsLoading(true);
 
+    const userClientKeys = Array.from(new Set([
+      userProfile?.clientId,
+      ...(userProfile?.assignedClientIds || [])
+    ].filter(Boolean).map(s => String(s).trim().toLowerCase())));
+
+    const isAllClients = isAdmin || userClientKeys.includes('all');
+
+    const isAccessible = (item: { clientId?: string; clientName?: string }) => {
+      if (isAllClients) return true;
+      if (userClientKeys.length === 0) return true;
+      const cId = (item.clientId || '').trim().toLowerCase();
+      const cName = (item.clientName || '').trim().toLowerCase();
+      return userClientKeys.some(k => k === cId || k === cName);
+    };
+
     const unsubCabs = onSnapshot(collection(db, 'cabs'), (snap) => {
       const items: Cab[] = [];
-      snap.forEach(doc => items.push({ id: doc.id, ...doc.data() } as Cab));
+      snap.forEach(doc => {
+        const data = doc.data();
+        items.push({ 
+          id: doc.id, 
+          ...data,
+          registrationNumber: data.registrationNumber || data.regNumber || data.vehicleNumber || 'N/A',
+          etsVehicleId: data.etsVehicleId || data.vehicleId || data.id || 'N/A',
+          clientName: data.clientName || data.client || 'N/A',
+        } as Cab);
+      });
 
-      const isAllClients = isAdmin || userProfile?.assignedClientIds?.includes('all');
-      const allowedClientIds = userProfile?.assignedClientIds || [];
-
-      const accessible = isAllClients
-        ? items
-        : items.filter(c => allowedClientIds.includes(c.clientId) || allowedClientIds.includes(c.clientName));
-
+      const accessible = items.filter(isAccessible);
       setCabs(accessible);
     });
 
     const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snap) => {
       const items: Driver[] = [];
-      snap.forEach(doc => items.push({ id: doc.id, ...doc.data() } as Driver));
+      snap.forEach(doc => {
+        const data = doc.data();
+        items.push({ 
+          id: doc.id, 
+          ...data,
+          name: data.name || data.driverName || 'N/A',
+          driverId: data.driverId || data.id || 'N/A',
+          phoneNumbers: data.phoneNumbers || data.phone || data.mobile || data.driverMobileNumber || '',
+          clientName: data.clientName || data.client || 'N/A',
+        } as Driver);
+      });
 
-      const isAllClients = isAdmin || userProfile?.assignedClientIds?.includes('all');
-      const allowedClientIds = userProfile?.assignedClientIds || [];
-
-      const accessible = isAllClients
-        ? items
-        : items.filter(d => allowedClientIds.includes(d.clientId) || allowedClientIds.includes(d.clientName));
-
+      const accessible = items.filter(isAccessible);
       setDrivers(accessible);
       setIsLoading(false);
     });
@@ -116,17 +139,13 @@ export const ExpiringAlertsView: React.FC = () => {
 
   // Apply filters
   const filteredCabAnalyses = cabAnalyses.filter(a => {
-    const reg = (a.entity.registrationNumber || '').toLowerCase();
-    const ets = (a.entity.etsVehicleId || '').toLowerCase();
-    const matchesSearch = !searchTerm || reg.includes(searchTerm.toLowerCase()) || ets.includes(searchTerm.toLowerCase());
+    const matchesSearch = matchesCabSearch(a.entity, searchTerm);
     if (filterType === 'all') return matchesSearch;
     return matchesSearch && a.worstStatus === filterType;
   });
 
   const filteredDriverAnalyses = driverAnalyses.filter(a => {
-    const name = (a.entity.name || '').toLowerCase();
-    const license = (a.entity.driverLicenseNumber || '').toLowerCase();
-    const matchesSearch = !searchTerm || name.includes(searchTerm.toLowerCase()) || license.includes(searchTerm.toLowerCase());
+    const matchesSearch = matchesDriverSearch(a.entity, searchTerm, scopedCabs);
     if (filterType === 'all') return matchesSearch;
     return matchesSearch && a.worstStatus === filterType;
   });

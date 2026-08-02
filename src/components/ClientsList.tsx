@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { collection, getDocs, addDoc, deleteDoc, doc, query } from 'firebase/firestore';
+import { collection, getDocs, addDoc, deleteDoc, doc, query, onSnapshot } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { Client, Driver, Cab } from '../types';
@@ -26,47 +26,56 @@ export const ClientsList: React.FC = () => {
   const [actionSuccess, setActionSuccess] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
-  const fetchClientsData = async () => {
+  useEffect(() => {
     setIsLoading(true);
-    try {
-      // 1. Fetch Clients
-      const q = query(collection(db, 'clients'));
-      const snap = await getDocs(q);
+
+    const userClientKeys = Array.from(new Set([
+      userProfile?.clientId,
+      ...(userProfile?.assignedClientIds || [])
+    ].filter(Boolean).map(s => String(s).trim().toLowerCase())));
+
+    const isAllClients = isAdmin || userClientKeys.includes('all');
+
+    const isAccessible = (c: { clientId?: string; clientName?: string }) => {
+      if (isAllClients) return true;
+      if (userClientKeys.length === 0) return true;
+      const cId = (c.clientId || '').trim().toLowerCase();
+      const cName = (c.clientName || '').trim().toLowerCase();
+      return userClientKeys.some(k => k === cId || k === cName);
+    };
+
+    const unsubClients = onSnapshot(collection(db, 'clients'), (snap) => {
       const items: Client[] = [];
       snap.forEach(docSnap => {
-        items.push({ id: docSnap.id, ...docSnap.data() } as Client);
+        const data = docSnap.data() as Client;
+        // Exclude unwanted old clients
+        const nameLower = (data.clientName || '').toLowerCase();
+        if (nameLower.includes('tech corp') || nameLower.includes('techcorp') || nameLower.includes('global logistics') || nameLower.includes('alpha retail')) {
+          return;
+        }
+        items.push({ id: docSnap.id, ...data });
       });
-
-      // 2. Fetch Drivers and Cabs for count badges
-      const driverSnap = await getDocs(collection(db, 'drivers'));
-      const dItems: Driver[] = [];
-      driverSnap.forEach(d => dItems.push({ id: d.id, ...d.data() } as Driver));
-
-      const cabSnap = await getDocs(collection(db, 'cabs'));
-      const cItems: Cab[] = [];
-      cabSnap.forEach(c => cItems.push({ id: c.id, ...c.data() } as Cab));
-
-      setDrivers(dItems);
-      setCabs(cItems);
-
-      // Filter clients by user permissions
-      const isAllClients = isAdmin || userProfile?.assignedClientIds?.includes('all');
-      const allowedClientIds = userProfile?.assignedClientIds || [];
-
-      const accessible = isAllClients
-        ? items
-        : items.filter(c => allowedClientIds.includes(c.clientId) || allowedClientIds.includes(c.clientName));
-
-      setClients(accessible);
-    } catch (err) {
-      console.error('Error fetching clients:', err);
-    } finally {
+      setClients(items.filter(isAccessible));
       setIsLoading(false);
-    }
-  };
+    }, err => console.error('Clients listener error:', err));
 
-  useEffect(() => {
-    fetchClientsData();
+    const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snap) => {
+      const dItems: Driver[] = [];
+      snap.forEach(d => dItems.push({ id: d.id, ...d.data() } as Driver));
+      setDrivers(dItems);
+    });
+
+    const unsubCabs = onSnapshot(collection(db, 'cabs'), (snap) => {
+      const cItems: Cab[] = [];
+      snap.forEach(c => cItems.push({ id: c.id, ...c.data() } as Cab));
+      setCabs(cItems);
+    });
+
+    return () => {
+      unsubClients();
+      unsubDrivers();
+      unsubCabs();
+    };
   }, [userProfile, isAdmin]);
 
   const handleAddClient = async (e: React.FormEvent) => {
@@ -102,7 +111,6 @@ export const ClientsList: React.FC = () => {
       setNewClientName('');
       setNewClientId('');
       setShowAddModal(false);
-      await fetchClientsData();
     } catch (err: any) {
       console.error('Error adding client:', err);
       setActionError(err.message || 'Failed to add client.');
@@ -120,7 +128,6 @@ export const ClientsList: React.FC = () => {
         await deleteDoc(doc(db, 'clients', clientDocId));
       }
       setActionSuccess(`Deleted client "${clientName || clientId}".`);
-      await fetchClientsData();
     } catch (err: any) {
       console.error('Error deleting client:', err);
       setActionError('Failed to delete client: ' + err.message);
@@ -200,7 +207,6 @@ export const ClientsList: React.FC = () => {
       });
 
       setActionSuccess(`Successfully seeded dummy client "Apex Tech Solutions" (client-apex) with active driver & cab records!`);
-      await fetchClientsData();
     } catch (err: any) {
       console.error('Seed error:', err);
       setActionError('Failed to seed dummy client: ' + err.message);
@@ -243,7 +249,10 @@ export const ClientsList: React.FC = () => {
           </div>
 
           <button
-            onClick={fetchClientsData}
+            onClick={() => {
+              setIsLoading(true);
+              setTimeout(() => setIsLoading(false), 300);
+            }}
             title="Refresh"
             className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl border border-slate-200 transition-colors cursor-pointer"
           >

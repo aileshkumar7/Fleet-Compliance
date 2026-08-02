@@ -268,7 +268,6 @@ export async function exportRecordExcelReport(
       { name: 'Permit', date: cab.permitExpiryDate },
       { name: 'Road Tax', date: cab.roadTaxExpiryDate },
       { name: 'Fitness Certificate', date: cab.fitnessExpiryDate },
-      { name: 'Vehicle Service', date: cab.vehicleServiceExpiryDate },
     ];
 
     const docAuditRows = cabDocs.map(d => {
@@ -455,7 +454,6 @@ export async function exportRecordPdfReport(
       { name: 'Permit', date: cab.permitExpiryDate },
       { name: 'Road Tax', date: cab.roadTaxExpiryDate },
       { name: 'Fitness Certificate', date: cab.fitnessExpiryDate },
-      { name: 'Vehicle Service', date: cab.vehicleServiceExpiryDate },
     ];
 
     const docBody = cabDocs.map(d => {

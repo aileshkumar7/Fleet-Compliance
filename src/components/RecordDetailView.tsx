@@ -39,11 +39,21 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
   const [isExportingExcel, setIsExportingExcel] = useState<boolean>(false);
 
   // Rule 2: RESTRICTED DATA VIEW - Access Denied check for direct navigation
-  const userClientId = userProfile?.clientId || userProfile?.assignedClientIds?.[0] || '';
-  const isUnauthorized = !isAdmin && userClientId && record.clientId && (
-    record.clientId.toLowerCase() !== userClientId.toLowerCase() &&
-    (record.clientName || '').toLowerCase() !== userClientId.toLowerCase()
+  const userClientKeys = Array.from(new Set([
+    userProfile?.clientId,
+    ...(userProfile?.assignedClientIds || [])
+  ].filter(Boolean).map(s => String(s).trim().toLowerCase())));
+
+  const isAllClients = isAdmin || userClientKeys.includes('all');
+
+  const recCId = (record.clientId || '').trim().toLowerCase();
+  const recCName = (record.clientName || '').trim().toLowerCase();
+
+  const isUnauthorized = !isAdmin && !isAllClients && userClientKeys.length > 0 && recCId && (
+    !userClientKeys.some(k => k === recCId || k === recCName)
   );
+
+  const userClientIdDisplay = userClientKeys.join(', ') || 'Bound Client';
 
   if (isUnauthorized) {
     return (
@@ -56,7 +66,7 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
           <p className="text-xs text-slate-500 mt-1">Direct access blocked by Client Organization Data Isolation policy.</p>
         </div>
         <p className="text-xs text-slate-600 max-w-md mx-auto bg-rose-50/70 p-3 rounded-xl border border-rose-100 font-medium">
-          Your account is bound exclusively to client organization <span className="font-bold text-blue-700 font-mono">{userClientId}</span>. You cannot view compliance profiles belonging to other clients.
+          Your account is bound exclusively to client organization <span className="font-bold text-blue-700 font-mono">{userClientIdDisplay}</span>. You cannot view compliance profiles belonging to other clients.
         </p>
         <div className="pt-2">
           <button
@@ -94,7 +104,6 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
       { name: 'Permit', expiry: cab.permitExpiryDate },
       { name: 'Road Tax', expiry: cab.roadTaxExpiryDate },
       { name: 'Fitness Certificate', expiry: cab.fitnessExpiryDate },
-      { name: 'Vehicle Service', expiry: cab.vehicleServiceExpiryDate },
     ];
 
     return (
@@ -423,6 +432,44 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
             </div>
           </div>
         </div>
+
+        {/* Inactiveness Reason & Action to Rectify Callout */}
+        {(driver.status || '').toLowerCase() === 'inactive' && (
+          <div className="bg-amber-50 border-2 border-amber-300 rounded-2xl p-6 space-y-3 shadow-md">
+            <div className="flex items-center gap-2.5 text-amber-900 font-extrabold text-base">
+              <AlertTriangle className="w-5 h-5 text-amber-600 shrink-0 animate-pulse" />
+              <span>Inactive Driver Status & Rectification Action Required</span>
+            </div>
+            
+            <div className="bg-white p-4 rounded-xl border border-amber-200 space-y-2 text-xs">
+              <div>
+                <span className="font-bold text-amber-900 uppercase tracking-wider text-[11px] block">Reason for Inactiveness:</span>
+                <p className="text-slate-800 font-semibold mt-0.5 text-sm">
+                  {driver.inactivityReason || driver.comments || 'Deactivated due to non-compliant verification status or document expiry.'}
+                </p>
+              </div>
+
+              {driver.deactivationDate && (
+                <div>
+                  <span className="font-bold text-amber-900 uppercase tracking-wider text-[10px]">Deactivation Date:</span>
+                  <span className="font-mono text-slate-700 ml-2 font-bold">{driver.deactivationDate}</span>
+                </div>
+              )}
+            </div>
+
+            <div className="bg-amber-100/70 p-3.5 rounded-xl border border-amber-200 text-xs text-amber-950 font-medium space-y-1">
+              <p className="font-bold text-amber-900 flex items-center gap-1.5">
+                <CheckCircle2 className="w-4 h-4 text-amber-700" />
+                <span>Recommended Rectification Steps to Re-activate:</span>
+              </p>
+              <ul className="list-disc list-inside pl-1 space-y-1 text-slate-800">
+                <li>Verify renewed document copy (DL, BGV, Police Verification, Medical, or Eye Test).</li>
+                <li>Upload fresh compliance certificate via the Excel Upload or Document Portal.</li>
+                <li>Submit record to Fleet Operations Admin to switch status back to <span className="font-bold text-emerald-700 font-mono">ACTIVE</span>.</li>
+              </ul>
+            </div>
+          </div>
+        )}
 
         {/* SECTION 1: PERSONAL INFO */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-6 space-y-4">

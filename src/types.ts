@@ -34,6 +34,7 @@ export interface Driver {
   comments: string;
   dateOfBirth: string;
   deactivationDate: string;
+  inactivityReason?: string;
   profileImageUrl: string;
   louDocumentUrl: string;
   eyeTestExpiryDate: string;
@@ -46,6 +47,8 @@ export interface Driver {
   documentsUploaded: string[];
   status: 'active' | 'inactive' | string;
   clientId: string;
+  uploadBatchId?: string;
+  uploadBatchFileName?: string;
 }
 
 export interface Cab {
@@ -74,6 +77,7 @@ export interface Cab {
   vehicleOwnership: string;
   permitType: string;
   deactivationDate: string;
+  inactivityReason?: string;
   otherDocuments: string;
   approvedBy: string;
   approvedTime: string;
@@ -87,6 +91,8 @@ export interface Cab {
   driverComplianceStatus: string;
   status: 'active' | 'inactive' | string;
   clientId: string;
+  uploadBatchId?: string;
+  uploadBatchFileName?: string;
 }
 
 export interface Client {

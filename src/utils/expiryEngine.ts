@@ -30,6 +30,16 @@ export function parseExpiryDate(dateStr: string | null | undefined): Date | null
   const trimmed = dateStr.trim();
   if (!trimmed || trimmed === 'N/A' || trimmed.toLowerCase() === 'null') return null;
 
+  // Try YYYY-MM-DD or YYYY/MM/DD
+  const yyyymmddMatch = trimmed.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/);
+  if (yyyymmddMatch) {
+    const year = parseInt(yyyymmddMatch[1], 10);
+    const month = parseInt(yyyymmddMatch[2], 10) - 1;
+    const day = parseInt(yyyymmddMatch[3], 10);
+    const d = new Date(year, month, day);
+    if (!isNaN(d.getTime())) return d;
+  }
+
   // Try DD/MM/YYYY or DD-MM-YYYY
   const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
   if (ddmmyyyyMatch) {
@@ -40,10 +50,10 @@ export function parseExpiryDate(dateStr: string | null | undefined): Date | null
     if (!isNaN(d.getTime())) return d;
   }
 
-  // Try standard Date parsing
+  // Try standard Date parsing using local date components
   const parsed = new Date(trimmed);
   if (!isNaN(parsed.getTime())) {
-    return parsed;
+    return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
   }
 
   return null;
@@ -143,7 +153,6 @@ export function analyzeCabExpiry(cab: Cab): EntityExpiryAnalysis<Cab> {
     { docName: 'Permit', fieldName: 'permitExpiryDate' },
     { docName: 'Road Tax', fieldName: 'roadTaxExpiryDate' },
     { docName: 'Fitness', fieldName: 'fitnessExpiryDate' },
-    { docName: 'Vehicle Service', fieldName: 'vehicleServiceExpiryDate' },
   ];
 
   const alerts: DocumentAlert[] = [];
