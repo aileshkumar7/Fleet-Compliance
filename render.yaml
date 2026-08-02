@@ -1,0 +1,11 @@
+# Render deployment configuration for Fleet Compliance Manager (Vite + React SPA)
+services:
+  - type: web
+    name: fleet-compliance-manager
+    runtime: static
+    buildCommand: npm run build
+    staticPublishPath: ./dist
+    routes:
+      - type: rewrite
+        source: /*
+        destination: /index.html
