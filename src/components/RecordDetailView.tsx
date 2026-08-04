@@ -363,15 +363,12 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
   } else {
     const driver = record as Driver;
 
-    // Compliance Documents for Driver
+    // Compliance Documents for Driver (4 Verification Checks)
     const driverComplianceDocs = [
       { name: 'Driver License', number: driver.driverLicenseNumber, expiry: driver.driverLicenseExpiryDate },
-      { name: 'Badge', number: driver.badgeNumber, expiry: driver.badgeExpiryDate },
       { name: 'BGV (Background Check)', number: driver.backgroundCheckStatus, expiry: driver.bgvExpiryDate },
       { name: 'Police Verification', number: driver.policeVerificationStatus, expiry: driver.policeVerificationExpiryDate },
       { name: 'Medical Verification', number: driver.medicalVerificationStatus, expiry: driver.medicalVerificationExpiryDate },
-      { name: 'Training Verification', number: driver.trainingVerificationStatus, expiry: driver.trainingVerificationExpiryDate },
-      { name: 'Eye Test', number: 'Eye Check Record', expiry: driver.eyeTestExpiryDate },
     ];
 
     return (

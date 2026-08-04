@@ -112,7 +112,8 @@ export interface UploadChangeRecord {
 }
 
 export interface UploadLog {
-  id?: string;
+  id: string;
+  batchId?: string;
   fileName: string;
   uploadedBy: string;
   uploadedAt: string;

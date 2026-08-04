@@ -23,25 +23,25 @@ export interface EntityExpiryAnalysis<T> {
 }
 
 /**
- * Parses a date string robustly (handles YYYY-MM-DD, DD/MM/YYYY, ISO, etc.)
+ * Parses a date string robustly (handles YYYY-MM-DD, DD/MM/YYYY, ISO, etc.) without UTC timezone shifting
  */
 export function parseExpiryDate(dateStr: string | null | undefined): Date | null {
   if (!dateStr || typeof dateStr !== 'string') return null;
   const trimmed = dateStr.trim();
-  if (!trimmed || trimmed === 'N/A' || trimmed.toLowerCase() === 'null') return null;
+  if (!trimmed || trimmed === 'N/A' || trimmed.toLowerCase() === 'null' || trimmed === '-') return null;
 
-  // Try YYYY-MM-DD or YYYY/MM/DD
-  const yyyymmddMatch = trimmed.match(/^(\d{4})[\/-](\d{1,2})[\/-](\d{1,2})$/);
-  if (yyyymmddMatch) {
-    const year = parseInt(yyyymmddMatch[1], 10);
-    const month = parseInt(yyyymmddMatch[2], 10) - 1;
-    const day = parseInt(yyyymmddMatch[3], 10);
+  // Match YYYY-MM-DD or YYYY/MM/DD
+  const yymmdd = trimmed.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})$/);
+  if (yymmdd) {
+    const year = parseInt(yymmdd[1], 10);
+    const month = parseInt(yymmdd[2], 10) - 1;
+    const day = parseInt(yymmdd[3], 10);
     const d = new Date(year, month, day);
     if (!isNaN(d.getTime())) return d;
   }
 
   // Try DD/MM/YYYY or DD-MM-YYYY
-  const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/-](\d{1,2})[\/-](\d{4})$/);
+  const ddmmyyyyMatch = trimmed.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
   if (ddmmyyyyMatch) {
     const day = parseInt(ddmmyyyyMatch[1], 10);
     const month = parseInt(ddmmyyyyMatch[2], 10) - 1;
@@ -50,7 +50,7 @@ export function parseExpiryDate(dateStr: string | null | undefined): Date | null
     if (!isNaN(d.getTime())) return d;
   }
 
-  // Try standard Date parsing using local date components
+  // Try standard Date parsing with local midnight normalization
   const parsed = new Date(trimmed);
   if (!isNaN(parsed.getTime())) {
     return new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
@@ -144,7 +144,7 @@ export function evaluateDateAlert(docName: string, fieldName: string, dateStr: s
 }
 
 /**
- * Evaluates all 6 expiry fields for a Cab
+ * Evaluates all 5 expiry fields for a Cab (Insurance, PUC, Permit, Road Tax, Fitness)
  */
 export function analyzeCabExpiry(cab: Cab): EntityExpiryAnalysis<Cab> {
   const fieldsToCheck: { docName: string; fieldName: keyof Cab }[] = [
@@ -186,17 +186,14 @@ export function analyzeCabExpiry(cab: Cab): EntityExpiryAnalysis<Cab> {
 }
 
 /**
- * Evaluates all 7 expiry fields for a Driver
+ * Evaluates all 4 expiry fields for a Driver (Driver License, BGV, Police Verification, Medical Verification)
  */
 export function analyzeDriverExpiry(driver: Driver): EntityExpiryAnalysis<Driver> {
   const fieldsToCheck: { docName: string; fieldName: keyof Driver }[] = [
     { docName: 'Driver License', fieldName: 'driverLicenseExpiryDate' },
-    { docName: 'Badge', fieldName: 'badgeExpiryDate' },
     { docName: 'BGV', fieldName: 'bgvExpiryDate' },
     { docName: 'Police Verification', fieldName: 'policeVerificationExpiryDate' },
     { docName: 'Medical Verification', fieldName: 'medicalVerificationExpiryDate' },
-    { docName: 'Training Verification', fieldName: 'trainingVerificationExpiryDate' },
-    { docName: 'Eye Test', fieldName: 'eyeTestExpiryDate' },
   ];
 
   const alerts: DocumentAlert[] = [];

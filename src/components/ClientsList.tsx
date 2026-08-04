@@ -134,87 +134,6 @@ export const ClientsList: React.FC = () => {
     }
   };
 
-  // Seed Dummy Client "Apex Tech Solutions" (client-apex) with 1 driver and 1 cab record for walkthrough
-  const handleSeedDummyClient = async () => {
-    setIsSubmitting(true);
-    setActionError(null);
-    setActionSuccess(null);
-
-    try {
-      const dummyClientId = 'client-apex';
-      const dummyClientName = 'Apex Tech Solutions';
-
-      // 1. Add Client to Firestore
-      if (!clients.some(c => c.clientId === dummyClientId)) {
-        await addDoc(collection(db, 'clients'), {
-          clientName: dummyClientName,
-          clientId: dummyClientId,
-          createdAt: new Date().toISOString(),
-        });
-      }
-
-      // 2. Add 1 Driver for Apex
-      await addDoc(collection(db, 'drivers'), {
-        driverId: 'DR-APEX-01',
-        name: 'Arjun Verma',
-        clientName: dummyClientName,
-        clientId: dummyClientId,
-        status: 'active',
-        overallComplianceStatus: 'Compliant',
-        city: 'Bangalore',
-        offices: 'Koramangala Hub',
-        driverLicenseNumber: 'KA-03-2023-0088192',
-        driverLicenseExpiryDate: '2028-11-20',
-        badgeNumber: 'BDG-APEX-1',
-        badgeExpiryDate: '2027-05-15',
-        driverAge: 29,
-        backgroundCheckStatus: 'Verified',
-        bgvExpiryDate: '2027-01-10',
-        policeVerificationStatus: 'Verified',
-        policeVerificationExpiryDate: '2027-02-28',
-        overallApprovalStatus: 'Approved',
-        phoneNumbers: '+91 9900112233',
-        address: '88 Koramangala 4th Block, Bangalore',
-        createdTime: new Date().toISOString(),
-        updatedTime: new Date().toISOString(),
-        documentsUploaded: ['Driving License', 'Police Verification'],
-      });
-
-      // 3. Add 1 Cab for Apex
-      await addDoc(collection(db, 'cabs'), {
-        etsVehicleId: 'CAB-APEX-101',
-        registrationNumber: 'KA-03-AP-9900',
-        clientName: dummyClientName,
-        clientId: dummyClientId,
-        status: 'active',
-        vehicleType: 'EV Sedan (Tigor)',
-        overallComplianceStatus: 'Compliant',
-        manufacturingDate: '2022-03-10',
-        registrationDate: '2022-04-01',
-        ageYears: 2,
-        insuranceExpiryDate: '2027-04-01',
-        pollutionCertificateExpiryDate: '2026-10-15',
-        permitExpiryDate: '2027-04-01',
-        fitnessExpiryDate: '2027-04-01',
-        driverName: 'Arjun Verma',
-        driverMobileNumber: '+91 9900112233',
-        driverComplianceStatus: 'Compliant',
-        fuelType: 'Electric',
-        vehicleOwnership: 'Company Owned',
-        createdTime: new Date().toISOString(),
-        updatedTime: new Date().toISOString(),
-        documentsUploaded: ['RC Copy', 'Insurance', 'PUC'],
-      });
-
-      setActionSuccess(`Successfully seeded dummy client "Apex Tech Solutions" (client-apex) with active driver & cab records!`);
-    } catch (err: any) {
-      console.error('Seed error:', err);
-      setActionError('Failed to seed dummy client: ' + err.message);
-    } finally {
-      setIsSubmitting(false);
-    }
-  };
-
   const filteredClients = clients.filter(c =>
     (c.clientName || '').toLowerCase().includes(searchTerm.toLowerCase()) ||
     (c.clientId || '').toLowerCase().includes(searchTerm.toLowerCase())
@@ -260,25 +179,13 @@ export const ClientsList: React.FC = () => {
           </button>
 
           {isAdmin && (
-            <>
-              <button
-                onClick={() => setShowAddModal(true)}
-                className="inline-flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-2xs transition-colors cursor-pointer"
-              >
-                <Plus className="w-4 h-4" />
-                <span>Add Client</span>
-              </button>
-
-              <button
-                onClick={handleSeedDummyClient}
-                disabled={isSubmitting}
-                className="inline-flex items-center gap-1.5 bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-200 font-bold text-xs px-3 py-2 rounded-xl transition-colors cursor-pointer"
-                title="Create dummy client Apex Tech Solutions for testing"
-              >
-                <Sparkles className="w-3.5 h-3.5 text-amber-600" />
-                <span>+ Dummy Client (Apex Tech)</span>
-              </button>
-            </>
+            <button
+              onClick={() => setShowAddModal(true)}
+              className="inline-flex items-center gap-1.5 bg-violet-600 hover:bg-violet-700 text-white font-bold text-xs px-4 py-2 rounded-xl shadow-2xs transition-colors cursor-pointer"
+            >
+              <Plus className="w-4 h-4" />
+              <span>Add Client</span>
+            </button>
           )}
         </div>
       </div>

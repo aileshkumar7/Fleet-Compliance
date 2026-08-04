@@ -9,7 +9,7 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { Driver, Cab, Client, UploadLog } from '../types';
 import { analyzeCabExpiry, analyzeDriverExpiry } from '../utils/expiryEngine';
-import { ensureCompleteDriversDataset } from '../utils/seedDriversData';
+import { purgeAllDummyData } from '../utils/seedDriversData';
 import { matchesCabSearch, matchesDriverSearch } from '../utils/searchUtils';
 import { RecordDetailView } from './RecordDetailView';
 import { ReportDownloadModal } from './ReportDownloadModal';
@@ -35,7 +35,8 @@ import {
   ArrowRight,
   Upload,
   FileSpreadsheet,
-  Download
+  Download,
+  Trash2
 } from 'lucide-react';
 
 interface DashboardProps {
@@ -96,10 +97,6 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
     // 1. Subscribe to drivers
     const unsubscribeDrivers = onSnapshot(collection(db, 'drivers'), (snapshot) => {
-      if (snapshot.size < 89) {
-        ensureCompleteDriversDataset();
-      }
-
       const items: Driver[] = [];
       snapshot.forEach(docSnap => {
         const data = docSnap.data();
@@ -178,10 +175,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const scopedDrivers = drivers.filter(d => matchClient(d.clientName, d.clientId));
 
   // Compute live summary counts strictly respecting selected client filter
+  const totalCabsCount = scopedCabs.length;
   const activeCabsCount = scopedCabs.filter(c => (c.status || '').toLowerCase() === 'active').length;
   const inactiveCabsCount = scopedCabs.filter(c => (c.status || '').toLowerCase() === 'inactive').length;
+
+  const totalDriversCount = scopedDrivers.length;
   const activeDriversCount = scopedDrivers.filter(d => (d.status || '').toLowerCase() === 'active').length;
   const inactiveDriversCount = scopedDrivers.filter(d => (d.status || '').toLowerCase() === 'inactive').length;
+
+  const totalFleetCount = totalCabsCount + totalDriversCount;
 
   const filteredCabs = scopedCabs.filter(c => matchesCabSearch(c, searchTerm));
 
@@ -285,141 +287,273 @@ export const Dashboard: React.FC<DashboardProps> = ({
         </div>
       )}
 
-      {/* Dashboard Top Header & Last Updated Badge */}
-      <div className="flex flex-col md:flex-row md:items-center md:justify-between bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs gap-4">
-        <div>
-          <h2 className="text-xl font-bold text-slate-800 tracking-tight flex items-center gap-2.5">
-            <div className="p-2 bg-blue-600 text-white rounded-xl shadow-xs">
-              <Truck className="w-5 h-5" />
+      {/* Dashboard Top Header & Live Fleet Totals Summary */}
+      <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs space-y-4">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+          <div>
+            <h2 className="text-xl font-bold text-slate-800 tracking-tight flex items-center gap-2.5">
+              <div className="p-2 bg-blue-600 text-white rounded-xl shadow-xs">
+                <Truck className="w-5 h-5" />
+              </div>
+              <span>Fleet Operations Dashboard</span>
+            </h2>
+            <p className="text-xs text-slate-500 mt-1">
+              Real-time compliance tracking for cabs, drivers, and organizational clients.
+            </p>
+          </div>
+
+          {/* Top Header Actions (Download Report + Last Updated) */}
+          <div className="flex flex-wrap items-center gap-3 shrink-0">
+            {isAdmin && (
+              <button
+                onClick={async () => {
+                  if (window.confirm("Are you sure you want to clean up legacy system seed data? This will permanently remove any records created by System Seed Engine.")) {
+                    const count = await purgeAllDummyData();
+                    alert(`Cleaned up ${count} legacy seed records.`);
+                  }
+                }}
+                className="inline-flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs px-3.5 py-2.5 rounded-xl border border-rose-200 transition-colors cursor-pointer shrink-0"
+                title="Manually purge records created by System Seed Engine"
+              >
+                <Trash2 className="w-4 h-4 text-rose-600" />
+                <span>Clean Up Legacy Data</span>
+              </button>
+            )}
+
+            <button
+              onClick={() => setShowReportModal(true)}
+              className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
+            >
+              <Download className="w-4 h-4" />
+              <span>Download Live Report</span>
+            </button>
+
+            <div className="flex items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200 shrink-0">
+              <Clock className="w-4 h-4 text-blue-600 shrink-0" />
+              <div className="text-xs">
+                <span className="text-slate-500 block text-[10px] uppercase font-bold tracking-wider">
+                  Last Updated Log
+                </span>
+                <span className="font-semibold text-slate-800 font-mono">
+                  {lastUploadLog?.uploadedAt 
+                    ? new Date(lastUploadLog.uploadedAt).toLocaleString() 
+                    : 'No uploads logged yet'}
+                </span>
+              </div>
+              {lastUploadLog?.fileName && (
+                <span className="text-[11px] font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded border border-blue-200 hidden sm:inline">
+                  {lastUploadLog.fileName}
+                </span>
+              )}
             </div>
-            <span>Fleet Operations Dashboard</span>
-          </h2>
-          <p className="text-xs text-slate-500 mt-1">
-            Real-time compliance tracking for cabs, drivers, and organizational clients.
-          </p>
+          </div>
         </div>
 
-        {/* Top Header Actions (Download Report + Last Updated) */}
-        <div className="flex flex-wrap items-center gap-3 shrink-0">
-          <button
-            onClick={() => setShowReportModal(true)}
-            className="inline-flex items-center gap-2 bg-blue-600 hover:bg-blue-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-xs transition-colors cursor-pointer shrink-0"
-          >
-            <Download className="w-4 h-4" />
-            <span>Download Live Report</span>
-          </button>
+        {/* Highlighted Final Overview Count Pills */}
+        <div className="pt-3 border-t border-slate-100 flex flex-wrap items-center gap-2.5">
+          <div className="inline-flex items-center gap-2 bg-blue-50/80 border border-blue-200/80 px-3.5 py-1.5 rounded-xl text-xs font-bold text-blue-950">
+            <Users className="w-4 h-4 text-blue-600" />
+            <span>Total Drivers: <strong className="text-blue-700 text-sm font-black font-mono ml-0.5">{totalDriversCount}</strong></span>
+            <span className="text-[11px] font-semibold text-blue-800/80 bg-blue-100/70 px-2 py-0.5 rounded-md">
+              {activeDriversCount} Active • {inactiveDriversCount} Inactive
+            </span>
+          </div>
 
-          <div className="flex items-center gap-3 bg-slate-50 p-2.5 rounded-xl border border-slate-200 shrink-0">
-            <Clock className="w-4 h-4 text-blue-600 shrink-0" />
-            <div className="text-xs">
-              <span className="text-slate-500 block text-[10px] uppercase font-bold tracking-wider">
-                Last Updated Log
-              </span>
-              <span className="font-semibold text-slate-800 font-mono">
-                {lastUploadLog?.uploadedAt 
-                  ? new Date(lastUploadLog.uploadedAt).toLocaleString() 
-                  : 'No uploads logged yet'}
-              </span>
-            </div>
-            {lastUploadLog?.fileName && (
-              <span className="text-[11px] font-mono bg-blue-100 text-blue-800 px-2 py-0.5 rounded border border-blue-200 hidden sm:inline">
-                {lastUploadLog.fileName}
-              </span>
-            )}
+          <div className="inline-flex items-center gap-2 bg-emerald-50/80 border border-emerald-200/80 px-3.5 py-1.5 rounded-xl text-xs font-bold text-emerald-950">
+            <Car className="w-4 h-4 text-emerald-600" />
+            <span>Total Cabs: <strong className="text-emerald-700 text-sm font-black font-mono ml-0.5">{totalCabsCount}</strong></span>
+            <span className="text-[11px] font-semibold text-emerald-800/80 bg-emerald-100/70 px-2 py-0.5 rounded-md">
+              {activeCabsCount} Active • {inactiveCabsCount} Inactive
+            </span>
+          </div>
+
+          <div className="inline-flex items-center gap-2 bg-slate-100/80 border border-slate-200 px-3.5 py-1.5 rounded-xl text-xs font-bold text-slate-900">
+            <Truck className="w-4 h-4 text-slate-600" />
+            <span>Total Combined Fleet: <strong className="text-slate-800 text-sm font-black font-mono ml-0.5">{totalFleetCount}</strong></span>
           </div>
         </div>
       </div>
 
-      {/* 4 Summary Live Cards Row */}
-      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4">
-        {/* Active Cabs */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col justify-between space-y-3 relative overflow-hidden">
+      {/* 8 Summary Live Cards Grid: Drivers, Cabs, and Document Expiry Alerts */}
+      <div className="grid grid-cols-2 md:grid-cols-4 lg:grid-cols-8 gap-3">
+        {/* Total Drivers Card */}
+        <div className="bg-gradient-to-br from-blue-600 to-indigo-700 text-white rounded-2xl border border-blue-700 shadow-xs p-3.5 flex flex-col justify-between space-y-1.5 relative overflow-hidden">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Active Cabs</span>
-            <div className="p-2 bg-emerald-100 text-emerald-700 rounded-xl">
-              <Car className="w-5 h-5" />
+            <span className="text-[10px] font-bold text-blue-100 uppercase tracking-wider">Total Drivers</span>
+            <div className="p-1 bg-white/20 rounded-lg text-white">
+              <Users className="w-3.5 h-3.5" />
             </div>
           </div>
           <div>
-            <div className="text-3xl font-black text-slate-900 tracking-tight">{activeCabsCount}</div>
-            <p className="text-[11px] text-emerald-700 font-semibold flex items-center gap-1 mt-1">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Compliant & In-Service</span>
+            <div className="text-2xl font-black tracking-tight font-mono">{totalDriversCount}</div>
+            <p className="text-[9px] text-blue-100 font-medium mt-0.5 truncate">
+              {activeDriversCount} Act • {inactiveDriversCount} Inact
             </p>
           </div>
-          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-            <div 
-              className="bg-emerald-500 h-full rounded-full transition-all duration-500" 
-              style={{ width: `${cabs.length ? Math.round((activeCabsCount / cabs.length) * 100) : 0}%` }}
-            ></div>
-          </div>
-        </div>
-
-        {/* Inactive Cabs */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col justify-between space-y-3 relative overflow-hidden">
-          <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Inactive Cabs</span>
-            <div className="p-2 bg-amber-100 text-amber-700 rounded-xl">
-              <ShieldAlert className="w-5 h-5" />
-            </div>
-          </div>
-          <div>
-            <div className="text-3xl font-black text-slate-900 tracking-tight">{inactiveCabsCount}</div>
-            <p className="text-[11px] text-amber-700 font-semibold flex items-center gap-1 mt-1">
-              <XCircle className="w-3.5 h-3.5" />
-              <span>Deactivated / Pending</span>
-            </p>
-          </div>
-          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
-            <div 
-              className="bg-amber-500 h-full rounded-full transition-all duration-500" 
-              style={{ width: `${cabs.length ? Math.round((inactiveCabsCount / cabs.length) * 100) : 0}%` }}
-            ></div>
+          <div className="w-full bg-white/20 h-1 rounded-full overflow-hidden">
+            <div className="bg-white h-full rounded-full" style={{ width: '100%' }}></div>
           </div>
         </div>
 
         {/* Active Drivers */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col justify-between space-y-3 relative overflow-hidden">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-3.5 flex flex-col justify-between space-y-1.5 relative overflow-hidden">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Active Drivers</span>
-            <div className="p-2 bg-blue-100 text-blue-700 rounded-xl">
-              <UserCheck className="w-5 h-5" />
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Active Drivers</span>
+            <div className="p-1.5 bg-blue-100 text-blue-700 rounded-lg">
+              <UserCheck className="w-3.5 h-3.5" />
             </div>
           </div>
           <div>
-            <div className="text-3xl font-black text-slate-900 tracking-tight">{activeDriversCount}</div>
-            <p className="text-[11px] text-blue-700 font-semibold flex items-center gap-1 mt-1">
-              <CheckCircle2 className="w-3.5 h-3.5" />
-              <span>Verified & On Duty</span>
+            <div className="text-2xl font-black text-slate-900 tracking-tight font-mono">{activeDriversCount}</div>
+            <p className="text-[10px] text-blue-700 font-semibold flex items-center gap-1 mt-0.5">
+              <CheckCircle2 className="w-3 h-3" />
+              <span>On Duty</span>
             </p>
           </div>
-          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+          <div className="w-full bg-slate-100 h-1 rounded-full overflow-hidden">
             <div 
               className="bg-blue-600 h-full rounded-full transition-all duration-500" 
-              style={{ width: `${drivers.length ? Math.round((activeDriversCount / drivers.length) * 100) : 0}%` }}
+              style={{ width: `${totalDriversCount ? Math.round((activeDriversCount / totalDriversCount) * 100) : 0}%` }}
             ></div>
           </div>
         </div>
 
         {/* Inactive Drivers */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-5 flex flex-col justify-between space-y-3 relative overflow-hidden">
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-3.5 flex flex-col justify-between space-y-1.5 relative overflow-hidden">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-bold text-slate-500 uppercase tracking-widest">Inactive Drivers</span>
-            <div className="p-2 bg-rose-100 text-rose-700 rounded-xl">
-              <UserX className="w-5 h-5" />
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Inactive Drivers</span>
+            <div className="p-1.5 bg-purple-100 text-purple-700 rounded-lg">
+              <UserX className="w-3.5 h-3.5" />
             </div>
           </div>
           <div>
-            <div className="text-3xl font-black text-slate-900 tracking-tight">{inactiveDriversCount}</div>
-            <p className="text-[11px] text-rose-700 font-semibold flex items-center gap-1 mt-1">
-              <AlertCircle className="w-3.5 h-3.5" />
-              <span>License Expired / Deactivated</span>
+            <div className="text-2xl font-black text-slate-900 tracking-tight font-mono">{inactiveDriversCount}</div>
+            <p className="text-[10px] text-purple-700 font-semibold flex items-center gap-1 mt-0.5">
+              <AlertCircle className="w-3 h-3" />
+              <span>Deactivated</span>
             </p>
           </div>
-          <div className="w-full bg-slate-100 h-1.5 rounded-full overflow-hidden">
+          <div className="w-full bg-slate-100 h-1 rounded-full overflow-hidden">
             <div 
-              className="bg-rose-500 h-full rounded-full transition-all duration-500" 
-              style={{ width: `${drivers.length ? Math.round((inactiveDriversCount / drivers.length) * 100) : 0}%` }}
+              className="bg-purple-500 h-full rounded-full transition-all duration-500" 
+              style={{ width: `${totalDriversCount ? Math.round((inactiveDriversCount / totalDriversCount) * 100) : 0}%` }}
+            ></div>
+          </div>
+        </div>
+
+        {/* Drivers with Expiring Documents */}
+        <div 
+          onClick={onNavigateToAlerts}
+          className="bg-rose-50/60 hover:bg-rose-50 rounded-2xl border border-rose-200 shadow-xs p-3.5 flex flex-col justify-between space-y-1.5 relative overflow-hidden cursor-pointer transition-colors"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-rose-800 uppercase tracking-wider">Expiring Drivers</span>
+            <div className="p-1 bg-rose-600 text-white rounded-lg shadow-2xs animate-pulse">
+              <AlertTriangle className="w-3.5 h-3.5" />
+            </div>
+          </div>
+          <div>
+            <div className="text-2xl font-black text-rose-900 tracking-tight font-mono">{driverAlertsCount}</div>
+            <p className="text-[10px] text-rose-700 font-semibold flex items-center gap-1 mt-0.5">
+              <AlertCircle className="w-3 h-3 text-rose-600" />
+              <span>Doc Check</span>
+            </p>
+          </div>
+          <div className="w-full bg-rose-200/60 h-1 rounded-full overflow-hidden">
+            <div 
+              className="bg-rose-600 h-full rounded-full transition-all duration-500" 
+              style={{ width: `${totalDriversCount ? Math.round((driverAlertsCount / totalDriversCount) * 100) : 0}%` }}
+            ></div>
+          </div>
+        </div>
+
+        {/* Total Cabs Card */}
+        <div className="bg-gradient-to-br from-emerald-600 to-teal-700 text-white rounded-2xl border border-emerald-700 shadow-xs p-3.5 flex flex-col justify-between space-y-1.5 relative overflow-hidden">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-emerald-100 uppercase tracking-wider">Total Cabs</span>
+            <div className="p-1 bg-white/20 rounded-lg text-white">
+              <Car className="w-3.5 h-3.5" />
+            </div>
+          </div>
+          <div>
+            <div className="text-2xl font-black tracking-tight font-mono">{totalCabsCount}</div>
+            <p className="text-[9px] text-emerald-100 font-medium mt-0.5 truncate">
+              {activeCabsCount} Act • {inactiveCabsCount} Inact
+            </p>
+          </div>
+          <div className="w-full bg-white/20 h-1 rounded-full overflow-hidden">
+            <div className="bg-white h-full rounded-full" style={{ width: '100%' }}></div>
+          </div>
+        </div>
+
+        {/* Active Cabs */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-3.5 flex flex-col justify-between space-y-1.5 relative overflow-hidden">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Active Cabs</span>
+            <div className="p-1.5 bg-emerald-100 text-emerald-700 rounded-lg">
+              <Car className="w-3.5 h-3.5" />
+            </div>
+          </div>
+          <div>
+            <div className="text-2xl font-black text-slate-900 tracking-tight font-mono">{activeCabsCount}</div>
+            <p className="text-[10px] text-emerald-700 font-semibold flex items-center gap-1 mt-0.5">
+              <CheckCircle2 className="w-3 h-3" />
+              <span>In-Service</span>
+            </p>
+          </div>
+          <div className="w-full bg-slate-100 h-1 rounded-full overflow-hidden">
+            <div 
+              className="bg-emerald-500 h-full rounded-full transition-all duration-500" 
+              style={{ width: `${totalCabsCount ? Math.round((activeCabsCount / totalCabsCount) * 100) : 0}%` }}
+            ></div>
+          </div>
+        </div>
+
+        {/* Inactive Cabs */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-xs p-3.5 flex flex-col justify-between space-y-1.5 relative overflow-hidden">
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider">Inactive Cabs</span>
+            <div className="p-1.5 bg-amber-100 text-amber-700 rounded-lg">
+              <ShieldAlert className="w-3.5 h-3.5" />
+            </div>
+          </div>
+          <div>
+            <div className="text-2xl font-black text-slate-900 tracking-tight font-mono">{inactiveCabsCount}</div>
+            <p className="text-[10px] text-amber-700 font-semibold flex items-center gap-1 mt-0.5">
+              <XCircle className="w-3 h-3" />
+              <span>Deactivated</span>
+            </p>
+          </div>
+          <div className="w-full bg-slate-100 h-1 rounded-full overflow-hidden">
+            <div 
+              className="bg-amber-500 h-full rounded-full transition-all duration-500" 
+              style={{ width: `${totalCabsCount ? Math.round((inactiveCabsCount / totalCabsCount) * 100) : 0}%` }}
+            ></div>
+          </div>
+        </div>
+
+        {/* Cabs with Expiring Documents */}
+        <div 
+          onClick={onNavigateToAlerts}
+          className="bg-rose-50/60 hover:bg-rose-50 rounded-2xl border border-rose-200 shadow-xs p-3.5 flex flex-col justify-between space-y-1.5 relative overflow-hidden cursor-pointer transition-colors"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-rose-800 uppercase tracking-wider">Expiring Cabs</span>
+            <div className="p-1 bg-rose-600 text-white rounded-lg shadow-2xs animate-pulse">
+              <AlertTriangle className="w-3.5 h-3.5" />
+            </div>
+          </div>
+          <div>
+            <div className="text-2xl font-black text-rose-900 tracking-tight font-mono">{cabAlertsCount}</div>
+            <p className="text-[10px] text-rose-700 font-semibold flex items-center gap-1 mt-0.5">
+              <AlertCircle className="w-3 h-3 text-rose-600" />
+              <span>Doc Check</span>
+            </p>
+          </div>
+          <div className="w-full bg-rose-200/60 h-1 rounded-full overflow-hidden">
+            <div 
+              className="bg-rose-600 h-full rounded-full transition-all duration-500" 
+              style={{ width: `${totalCabsCount ? Math.round((cabAlertsCount / totalCabsCount) * 100) : 0}%` }}
             ></div>
           </div>
         </div>

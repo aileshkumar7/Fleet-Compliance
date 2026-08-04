@@ -331,12 +331,9 @@ export async function exportRecordExcelReport(
 
     const driverDocs = [
       { name: 'Driver License', num: driver.driverLicenseNumber, date: driver.driverLicenseExpiryDate },
-      { name: 'Badge', num: driver.badgeNumber, date: driver.badgeExpiryDate },
       { name: 'BGV (Background Check)', num: driver.backgroundCheckStatus, date: driver.bgvExpiryDate },
       { name: 'Police Verification', num: driver.policeVerificationStatus, date: driver.policeVerificationExpiryDate },
       { name: 'Medical Check', num: driver.medicalVerificationStatus, date: driver.medicalVerificationExpiryDate },
-      { name: 'Training Verification', num: driver.trainingVerificationStatus, date: driver.trainingVerificationExpiryDate },
-      { name: 'Eye Test', num: 'Eye Check Record', date: driver.eyeTestExpiryDate },
     ];
 
     const docAuditRows = driverDocs.map(d => {
@@ -554,12 +551,9 @@ export async function exportRecordPdfReport(
     // Compliance Documents Table
     const driverDocs = [
       { name: 'Driver License', num: driver.driverLicenseNumber, date: driver.driverLicenseExpiryDate },
-      { name: 'Badge', num: driver.badgeNumber, date: driver.badgeExpiryDate },
       { name: 'BGV (Background Check)', num: driver.backgroundCheckStatus, date: driver.bgvExpiryDate },
       { name: 'Police Verification', num: driver.policeVerificationStatus, date: driver.policeVerificationExpiryDate },
       { name: 'Medical Check', num: driver.medicalVerificationStatus, date: driver.medicalVerificationExpiryDate },
-      { name: 'Training Verification', num: driver.trainingVerificationStatus, date: driver.trainingVerificationExpiryDate },
-      { name: 'Eye Test', num: 'Eye Check Record', date: driver.eyeTestExpiryDate },
     ];
 
     const docBody = driverDocs.map(d => {

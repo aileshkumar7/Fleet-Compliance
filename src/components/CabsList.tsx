@@ -177,11 +177,16 @@ export const CabsList: React.FC = () => {
             <RefreshCw className="w-5 h-5 animate-spin text-blue-600" />
             <span>Fetching vehicle records...</span>
           </div>
+        ) : cabs.length === 0 ? (
+          <div className="p-12 text-center text-slate-500 text-xs space-y-3">
+            <Truck className="w-10 h-10 text-slate-300 mx-auto" />
+            <p className="font-bold text-slate-700 text-sm">No cab data uploaded yet.</p>
+            <p className="text-slate-500 max-w-md mx-auto">Upload a Cabs Sheet to get started.</p>
+          </div>
         ) : filteredCabs.length === 0 ? (
           <div className="p-12 text-center text-slate-400 text-xs space-y-2">
             <Truck className="w-8 h-8 text-slate-300 mx-auto" />
-            <p className="font-semibold text-slate-600">No cab records found.</p>
-            <p>Upload a data sheet to populate vehicle compliance profiles.</p>
+            <p className="font-semibold text-slate-600">No cab records found matching search filters.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">

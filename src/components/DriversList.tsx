@@ -9,7 +9,6 @@ import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { Driver, Cab, Client, UploadLog } from '../types';
 import { analyzeDriverExpiry } from '../utils/expiryEngine';
-import { ensureCompleteDriversDataset } from '../utils/seedDriversData';
 import { matchesDriverSearch } from '../utils/searchUtils';
 import { 
   Users, Search, RefreshCw, ShieldAlert, ShieldCheck, Phone, MapPin, 
@@ -30,9 +29,6 @@ export const DriversList: React.FC = () => {
   const fetchDrivers = () => {
     setIsLoading(true);
 
-    // Auto-check and auto-parse complete roster if dataset is missing or incomplete
-    ensureCompleteDriversDataset();
-
     const userClientKeys = Array.from(new Set([
       userProfile?.clientId,
       ...(userProfile?.assignedClientIds || [])
@@ -51,10 +47,6 @@ export const DriversList: React.FC = () => {
     // Real-time Drivers listener
     const q = query(collection(db, 'drivers'));
     const unsubscribeDrivers = onSnapshot(q, (snap) => {
-      if (snap.size < 89) {
-        ensureCompleteDriversDataset();
-      }
-
       const items: Driver[] = [];
       snap.forEach(docSnap => {
         const data = docSnap.data();
@@ -291,11 +283,16 @@ export const DriversList: React.FC = () => {
             <RefreshCw className="w-5 h-5 animate-spin text-blue-600" />
             <span>Fetching driver records...</span>
           </div>
+        ) : drivers.length === 0 ? (
+          <div className="p-12 text-center text-slate-500 text-xs space-y-3">
+            <Users className="w-10 h-10 text-slate-300 mx-auto" />
+            <p className="font-bold text-slate-700 text-sm">No driver data uploaded yet.</p>
+            <p className="text-slate-500 max-w-md mx-auto">Upload a Drivers Sheet to get started.</p>
+          </div>
         ) : filteredDrivers.length === 0 ? (
           <div className="p-12 text-center text-slate-400 text-xs space-y-2">
             <Users className="w-8 h-8 text-slate-300 mx-auto" />
-            <p className="font-semibold text-slate-600">No driver records found matching filters.</p>
-            <p>Drivers automatically sync from Firestore or Excel uploads.</p>
+            <p className="font-semibold text-slate-600">No driver records found matching current search filters.</p>
           </div>
         ) : (
           <div className="overflow-x-auto">

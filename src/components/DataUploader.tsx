@@ -4,12 +4,32 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { Upload, FileSpreadsheet, Download, CheckCircle2, AlertTriangle, ArrowRight, RefreshCw, FileCheck, Info, Building2, Plus, LayoutDashboard } from 'lucide-react';
+import { 
+  Upload, 
+  FileSpreadsheet, 
+  Download, 
+  CheckCircle2, 
+  AlertTriangle, 
+  ArrowRight, 
+  RefreshCw, 
+  FileCheck, 
+  Info, 
+  Building2, 
+  Plus, 
+  LayoutDashboard,
+  Truck,
+  Users
+} from 'lucide-react';
 import { collection, getDocs, addDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { Client } from '../types';
-import { processDataSheetUpload, generateSampleDataSheetTemplate, UploadResult } from '../utils/excelParser';
+import { 
+  processDataSheetUpload, 
+  generateSampleCabsSheetTemplate, 
+  generateSampleDriversSheetTemplate,
+  UploadResult 
+} from '../utils/excelParser';
 
 interface DataUploaderProps {
   onUploadSuccess?: () => void;
@@ -20,14 +40,21 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
   const { userProfile, isAdmin } = useAuth();
   const userBoundClientId = userProfile?.clientId || userProfile?.assignedClientIds?.[0] || '';
 
-  const [selectedFile, setSelectedFile] = useState<File | null>(null);
+  const [activeUploadMode, setActiveUploadMode] = useState<'drivers' | 'cabs'>('drivers');
+  
+  // Independent File States
+  const [driversFile, setDriversFile] = useState<File | null>(null);
+  const [cabsFile, setCabsFile] = useState<File | null>(null);
+
   const [uploaderName, setUploaderName] = useState<string>(userProfile?.name || userProfile?.email || 'Fleet Operations User');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
-  const [isDragging, setIsDragging] = useState<boolean>(false);
+  
+  const [isDraggingDrivers, setIsDraggingDrivers] = useState<boolean>(false);
+  const [isDraggingCabs, setIsDraggingCabs] = useState<boolean>(false);
 
-  // Client Selection State for Step 2 Upload Assignment
+  // Client Selection State
   const [clients, setClients] = useState<Client[]>([]);
   const [selectedClientId, setSelectedClientId] = useState<string>(isAdmin ? 'auto' : (userBoundClientId || 'auto'));
   const [showNewClientInput, setShowNewClientInput] = useState<boolean>(false);
@@ -81,39 +108,24 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
     }
   };
 
-  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    if (e.target.files && e.target.files[0]) {
-      const file = e.target.files[0];
-      if (!file.name.match(/\.(xlsx|xls)$/i)) {
-        setErrorMsg('Please select a valid Excel (.xlsx or .xls) file.');
-        setSelectedFile(null);
-        return;
-      }
-      setErrorMsg(null);
-      setSelectedFile(file);
-      setUploadResult(null);
+  const validateAndSetFile = (file: File, mode: 'drivers' | 'cabs') => {
+    if (!file.name.match(/\.(xlsx|xls)$/i)) {
+      setErrorMsg('Please select a valid Excel (.xlsx or .xls) file.');
+      return;
+    }
+    setErrorMsg(null);
+    setUploadResult(null);
+    if (mode === 'drivers') {
+      setDriversFile(file);
+    } else {
+      setCabsFile(file);
     }
   };
 
-  const handleDrop = (e: React.DragEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    setIsDragging(false);
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const file = e.dataTransfer.files[0];
-      if (!file.name.match(/\.(xlsx|xls)$/i)) {
-        setErrorMsg('Please select a valid Excel (.xlsx or .xls) file.');
-        setSelectedFile(null);
-        return;
-      }
-      setErrorMsg(null);
-      setSelectedFile(file);
-      setUploadResult(null);
-    }
-  };
-
-  const handleProcessUpload = async () => {
-    if (!selectedFile) {
-      setErrorMsg('Please select an Excel file to upload.');
+  const handleProcessUpload = async (mode: 'drivers' | 'cabs') => {
+    const targetFile = mode === 'drivers' ? driversFile : cabsFile;
+    if (!targetFile) {
+      setErrorMsg(`Please select an Excel file to upload for ${mode}.`);
       return;
     }
 
@@ -131,23 +143,25 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
 
     try {
       const res = await processDataSheetUpload(
-        selectedFile, 
+        targetFile, 
         uploaderName.trim() || 'Admin User',
+        mode,
         overrideClientId,
         overrideClientName
       );
       setUploadResult(res);
       if (onUploadSuccess) onUploadSuccess();
     } catch (err: any) {
-      console.error('Upload processing error:', err);
-      setErrorMsg(err.message || 'Failed to parse and upload data sheet. Please check the file structure.');
+      console.error(`${mode} upload processing error:`, err);
+      setErrorMsg(err.message || `Failed to parse and upload ${mode} sheet. Please check the file structure.`);
     } finally {
       setIsProcessing(false);
     }
   };
 
   const resetUpload = () => {
-    setSelectedFile(null);
+    setDriversFile(null);
+    setCabsFile(null);
     setUploadResult(null);
     setErrorMsg(null);
   };
@@ -161,43 +175,67 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
             <div className="p-2 bg-blue-100 text-blue-700 rounded-xl">
               <FileSpreadsheet className="w-5 h-5" />
             </div>
-            <span>Upload Fleet Data Sheet</span>
+            <span>Upload Fleet Data Sheets</span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Import bulk records into Firestore for drivers, cabs, and client compliance tracking.
+            Upload Drivers Sheet and Cabs Sheet independently on your own schedule into Firestore.
           </p>
         </div>
 
-        <button
-          onClick={generateSampleDataSheetTemplate}
-          className="inline-flex items-center justify-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-4 py-2.5 rounded-xl border border-slate-200/80 transition-colors cursor-pointer shrink-0"
-        >
-          <Download className="w-4 h-4 text-blue-600" />
-          <span>Download Excel Template</span>
-        </button>
+        <div className="flex flex-wrap gap-2">
+          <button
+            onClick={generateSampleDriversSheetTemplate}
+            className="inline-flex items-center justify-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 text-xs font-semibold px-3 py-2 rounded-xl border border-blue-200 transition-colors cursor-pointer shrink-0"
+          >
+            <Download className="w-3.5 h-3.5 text-blue-600" />
+            <span>Download Drivers Template</span>
+          </button>
+          <button
+            onClick={generateSampleCabsSheetTemplate}
+            className="inline-flex items-center justify-center gap-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold px-3 py-2 rounded-xl border border-slate-200 transition-colors cursor-pointer shrink-0"
+          >
+            <Download className="w-3.5 h-3.5 text-slate-600" />
+            <span>Download Cabs Template</span>
+          </button>
+        </div>
       </div>
 
-      {/* Main Upload Card or Post-Upload Summary */}
+      {/* Main Mode Selector Tabs */}
+      {!uploadResult && (
+        <div className="flex bg-slate-200/80 p-1 rounded-2xl border border-slate-300 gap-1">
+          <button
+            onClick={() => setActiveUploadMode('drivers')}
+            className={`flex-1 py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              activeUploadMode === 'drivers'
+                ? 'bg-white text-blue-700 shadow-sm border border-slate-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+            }`}
+          >
+            <Users className="w-4 h-4 text-blue-600" />
+            <span>Upload Drivers Sheet</span>
+            {driversFile && <span className="w-2 h-2 rounded-full bg-emerald-500"></span>}
+          </button>
+
+          <button
+            onClick={() => setActiveUploadMode('cabs')}
+            className={`flex-1 py-3 px-4 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all cursor-pointer ${
+              activeUploadMode === 'cabs'
+                ? 'bg-white text-emerald-700 shadow-sm border border-slate-200'
+                : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+            }`}
+          >
+            <Truck className="w-4 h-4 text-emerald-600" />
+            <span>Upload Cabs Sheet</span>
+            {cabsFile && <span className="w-2 h-2 rounded-full bg-emerald-500"></span>}
+          </button>
+        </div>
+      )}
+
+      {/* Main Upload Form or Summary */}
       {!uploadResult ? (
         <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
-          {/* Instructions Box */}
-          <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-4 text-xs text-blue-900 space-y-2">
-            <div className="flex items-center gap-2 font-bold text-blue-900">
-              <Info className="w-4 h-4 text-blue-600 shrink-0" />
-              <span>Required Excel File Structure</span>
-            </div>
-            <p className="text-blue-800 leading-relaxed">
-              Your workbook should contain 4 sheets: <code className="bg-blue-100 px-1.5 py-0.5 rounded text-blue-900 font-mono">active Drivers</code>, <code className="bg-blue-100 px-1.5 py-0.5 rounded text-blue-900 font-mono">inactive Drivers</code>, <code className="bg-blue-100 px-1.5 py-0.5 rounded text-blue-900 font-mono">active Cabs</code>, and <code className="bg-blue-100 px-1.5 py-0.5 rounded text-blue-900 font-mono">inactive cabs</code>.
-            </p>
-            <ul className="list-disc list-inside space-y-1 text-blue-800 pl-1">
-              <li>Drivers match existing Firestore records by <strong>Driver ID</strong>.</li>
-              <li>Cabs match existing records by <strong>ETS Vehicle ID</strong> or <strong>Registration Number</strong>.</li>
-              <li>Expiry dates in <code className="bg-blue-100 px-1.5 py-0.5 rounded font-mono">DD/MM/YYYY</code> format will automatically be converted to date strings.</li>
-            </ul>
-          </div>
-
-          {/* Client Assignment Selection (Step 2 Upload Scope) */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2 border-t border-slate-100">
+          {/* Settings Section */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pb-4 border-b border-slate-100">
             <div>
               <label className="block text-xs font-bold text-slate-700 uppercase tracking-wider mb-2 flex items-center justify-between">
                 <span className="flex items-center gap-1.5">
@@ -273,14 +311,14 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
                   type="text"
                   value={newClientName}
                   onChange={(e) => setNewClientName(e.target.value)}
-                  placeholder="Client Organization Name (e.g. Apex Tech Solutions)"
+                  placeholder="Client Organization Name (e.g. Air India T3)"
                   className="bg-white border border-violet-200 rounded-xl px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-violet-500"
                 />
                 <input
                   type="text"
                   value={newClientId}
                   onChange={(e) => setNewClientId(e.target.value)}
-                  placeholder="Client ID (e.g. client-apex)"
+                  placeholder="Client ID (e.g. CL-AIRINDIA)"
                   className="bg-white border border-violet-200 rounded-xl px-3 py-2 text-xs text-slate-800 outline-none focus:ring-2 focus:ring-violet-500 font-mono"
                 />
               </div>
@@ -297,43 +335,187 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
             </div>
           )}
 
-          {/* Dropzone File Upload */}
-          <div
-            onDragOver={(e) => { e.preventDefault(); setIsDragging(true); }}
-            onDragLeave={() => setIsDragging(false)}
-            onDrop={handleDrop}
-            className={`border-2 border-dashed rounded-2xl p-8 sm:p-12 text-center transition-all cursor-pointer ${
-              isDragging ? 'border-blue-500 bg-blue-50/50 scale-[1.01]' : selectedFile ? 'border-emerald-300 bg-emerald-50/20' : 'border-slate-300 bg-slate-50/50 hover:bg-slate-50'
-            }`}
-          >
-            <input
-              type="file"
-              accept=".xlsx, .xls"
-              onChange={handleFileChange}
-              id="sheet-upload-input"
-              className="hidden"
-            />
-
-            <label htmlFor="sheet-upload-input" className="cursor-pointer space-y-3 block">
-              <div className="w-14 h-14 mx-auto rounded-2xl bg-blue-50 text-blue-600 flex items-center justify-center shadow-2xs">
-                {selectedFile ? <FileCheck className="w-7 h-7 text-emerald-600" /> : <Upload className="w-7 h-7 text-blue-600" />}
+          {/* ACTIVE MODE PANEL: DRIVERS SHEET UPLOAD */}
+          {activeUploadMode === 'drivers' && (
+            <div className="space-y-6">
+              <div className="bg-blue-50/60 border border-blue-100 rounded-xl p-4 text-xs text-blue-900 space-y-2">
+                <div className="flex items-center gap-2 font-bold text-blue-900">
+                  <Info className="w-4 h-4 text-blue-600 shrink-0" />
+                  <span>Drivers Sheet Requirements</span>
+                </div>
+                <p className="text-blue-800 leading-relaxed">
+                  Upload one Excel file containing two tabs: <code className="bg-blue-100 px-1.5 py-0.5 rounded text-blue-900 font-mono font-bold">active Drivers</code> and <code className="bg-blue-100 px-1.5 py-0.5 rounded text-blue-900 font-mono font-bold">inactive Drivers</code>.
+                </p>
+                <p className="text-blue-800 text-[11px]">
+                  <strong>Strict Collection Isolation:</strong> This upload will ONLY touch the <code className="bg-blue-100 px-1 py-0.5 rounded font-mono">drivers</code> collection — it will never write to or modify vehicle/cab records.
+                </p>
               </div>
 
-              {selectedFile ? (
-                <div>
-                  <p className="text-sm font-bold text-emerald-900">{selectedFile.name}</p>
-                  <p className="text-xs text-slate-500 mt-1">{(selectedFile.size / 1024).toFixed(1)} KB • Ready to parse</p>
+              <div
+                onDragOver={(e) => { e.preventDefault(); setIsDraggingDrivers(true); }}
+                onDragLeave={() => setIsDraggingDrivers(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDraggingDrivers(false);
+                  if (e.dataTransfer.files?.[0]) validateAndSetFile(e.dataTransfer.files[0], 'drivers');
+                }}
+                className={`border-2 border-dashed rounded-2xl p-8 sm:p-10 text-center transition-all cursor-pointer ${
+                  isDraggingDrivers ? 'border-blue-500 bg-blue-50/50 scale-[1.01]' : driversFile ? 'border-emerald-300 bg-emerald-50/20' : 'border-slate-300 bg-slate-50/50 hover:bg-slate-50'
+                }`}
+              >
+                <input
+                  type="file"
+                  accept=".xlsx, .xls"
+                  onChange={(e) => e.target.files?.[0] && validateAndSetFile(e.target.files[0], 'drivers')}
+                  id="drivers-sheet-input"
+                  className="hidden"
+                />
+
+                <label htmlFor="drivers-sheet-input" className="cursor-pointer space-y-3 block">
+                  <div className="w-14 h-14 mx-auto rounded-2xl bg-blue-100 text-blue-700 flex items-center justify-center shadow-2xs">
+                    {driversFile ? <FileCheck className="w-7 h-7 text-emerald-600" /> : <Users className="w-7 h-7 text-blue-600" />}
+                  </div>
+
+                  {driversFile ? (
+                    <div>
+                      <p className="text-sm font-bold text-emerald-900">{driversFile.name}</p>
+                      <p className="text-xs text-slate-500 mt-1">{(driversFile.size / 1024).toFixed(1)} KB • Ready for Drivers Sheet import</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-sm font-bold text-slate-800">
+                        Click to select or drag & drop Drivers Excel (.xlsx) file
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">Requires 'active Drivers' and 'inactive Drivers' tabs</p>
+                    </div>
+                  )}
+                </label>
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  onClick={generateSampleDriversSheetTemplate}
+                  className="text-xs text-blue-600 hover:text-blue-800 font-semibold flex items-center gap-1 cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download Drivers Template (.xlsx)</span>
+                </button>
+
+                <button
+                  onClick={() => handleProcessUpload('drivers')}
+                  disabled={!driversFile || isProcessing}
+                  className={`inline-flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-md ${
+                    !driversFile || isProcessing
+                      ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+                      : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer hover:shadow-lg'
+                  }`}
+                >
+                  {isProcessing ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Parsing & Updating Drivers...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      <span>Upload Drivers Sheet</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* ACTIVE MODE PANEL: CABS SHEET UPLOAD */}
+          {activeUploadMode === 'cabs' && (
+            <div className="space-y-6">
+              <div className="bg-emerald-50/60 border border-emerald-100 rounded-xl p-4 text-xs text-emerald-900 space-y-2">
+                <div className="flex items-center gap-2 font-bold text-emerald-900">
+                  <Info className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Cabs Sheet Requirements</span>
                 </div>
-              ) : (
-                <div>
-                  <p className="text-sm font-bold text-slate-800">
-                    Click to select or drag & drop Excel (.xlsx) file
-                  </p>
-                  <p className="text-xs text-slate-400 mt-1">Supports active and inactive Drivers & Cabs sheets</p>
-                </div>
-              )}
-            </label>
-          </div>
+                <p className="text-emerald-800 leading-relaxed">
+                  Upload one Excel file containing two tabs: <code className="bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-900 font-mono font-bold">active Cabs</code> and <code className="bg-emerald-100 px-1.5 py-0.5 rounded text-emerald-900 font-mono font-bold">inactive cabs</code>.
+                </p>
+                <p className="text-emerald-800 text-[11px]">
+                  <strong>Strict Collection Isolation:</strong> This upload will ONLY touch the <code className="bg-emerald-100 px-1 py-0.5 rounded font-mono">cabs</code> collection — it will never write to or modify driver records.
+                </p>
+              </div>
+
+              <div
+                onDragOver={(e) => { e.preventDefault(); setIsDraggingCabs(true); }}
+                onDragLeave={() => setIsDraggingCabs(false)}
+                onDrop={(e) => {
+                  e.preventDefault();
+                  setIsDraggingCabs(false);
+                  if (e.dataTransfer.files?.[0]) validateAndSetFile(e.dataTransfer.files[0], 'cabs');
+                }}
+                className={`border-2 border-dashed rounded-2xl p-8 sm:p-10 text-center transition-all cursor-pointer ${
+                  isDraggingCabs ? 'border-emerald-500 bg-emerald-50/50 scale-[1.01]' : cabsFile ? 'border-emerald-300 bg-emerald-50/20' : 'border-slate-300 bg-slate-50/50 hover:bg-slate-50'
+                }`}
+              >
+                <input
+                  type="file"
+                  accept=".xlsx, .xls"
+                  onChange={(e) => e.target.files?.[0] && validateAndSetFile(e.target.files[0], 'cabs')}
+                  id="cabs-sheet-input"
+                  className="hidden"
+                />
+
+                <label htmlFor="cabs-sheet-input" className="cursor-pointer space-y-3 block">
+                  <div className="w-14 h-14 mx-auto rounded-2xl bg-emerald-100 text-emerald-700 flex items-center justify-center shadow-2xs">
+                    {cabsFile ? <FileCheck className="w-7 h-7 text-emerald-600" /> : <Truck className="w-7 h-7 text-emerald-600" />}
+                  </div>
+
+                  {cabsFile ? (
+                    <div>
+                      <p className="text-sm font-bold text-emerald-900">{cabsFile.name}</p>
+                      <p className="text-xs text-slate-500 mt-1">{(cabsFile.size / 1024).toFixed(1)} KB • Ready for Cabs Sheet import</p>
+                    </div>
+                  ) : (
+                    <div>
+                      <p className="text-sm font-bold text-slate-800">
+                        Click to select or drag & drop Cabs Excel (.xlsx) file
+                      </p>
+                      <p className="text-xs text-slate-400 mt-1">Requires 'active Cabs' and 'inactive cabs' tabs</p>
+                    </div>
+                  )}
+                </label>
+              </div>
+
+              <div className="flex items-center justify-between pt-2">
+                <button
+                  onClick={generateSampleCabsSheetTemplate}
+                  className="text-xs text-emerald-600 hover:text-emerald-800 font-semibold flex items-center gap-1 cursor-pointer"
+                >
+                  <Download className="w-3.5 h-3.5" />
+                  <span>Download Cabs Template (.xlsx)</span>
+                </button>
+
+                <button
+                  onClick={() => handleProcessUpload('cabs')}
+                  disabled={!cabsFile || isProcessing}
+                  className={`inline-flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-md ${
+                    !cabsFile || isProcessing
+                      ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
+                      : 'bg-emerald-600 hover:bg-emerald-700 text-white cursor-pointer hover:shadow-lg'
+                  }`}
+                >
+                  {isProcessing ? (
+                    <>
+                      <RefreshCw className="w-4 h-4 animate-spin" />
+                      <span>Parsing & Updating Cabs...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Upload className="w-4 h-4" />
+                      <span>Upload Cabs Sheet</span>
+                    </>
+                  )}
+                </button>
+              </div>
+            </div>
+          )}
 
           {errorMsg && (
             <div className="p-4 bg-red-50 border border-red-200 rounded-xl flex items-center gap-3 text-xs text-red-800 font-medium">
@@ -341,36 +523,10 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
               <span>{errorMsg}</span>
             </div>
           )}
-
-          {/* Action Button */}
-          <div className="flex justify-end pt-2">
-            <button
-              onClick={handleProcessUpload}
-              disabled={!selectedFile || isProcessing}
-              className={`inline-flex items-center gap-2 px-6 py-3 rounded-xl font-bold text-xs uppercase tracking-wider transition-all shadow-md ${
-                !selectedFile || isProcessing
-                  ? 'bg-slate-200 text-slate-400 cursor-not-allowed shadow-none'
-                  : 'bg-blue-600 hover:bg-blue-700 text-white cursor-pointer hover:shadow-lg'
-              }`}
-            >
-              {isProcessing ? (
-                <>
-                  <RefreshCw className="w-4 h-4 animate-spin" />
-                  <span>Parsing & Updating Firestore...</span>
-                </>
-              ) : (
-                <>
-                  <Upload className="w-4 h-4" />
-                  <span>Process & Upload Data Sheet</span>
-                </>
-              )}
-            </button>
-          </div>
         </div>
       ) : (
         /* Post-Upload Summary Screen */
         <div className="space-y-6">
-          {/* Prominent Stat Cards Banner */}
           <div className="bg-white rounded-2xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
             <div className="flex items-center justify-between border-b border-slate-100 pb-4">
               <div className="flex items-center gap-3">
@@ -378,15 +534,17 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
                   <CheckCircle2 className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="text-lg font-bold text-slate-900 tracking-tight">Upload Processing Completed</h3>
+                  <h3 className="text-lg font-bold text-slate-900 tracking-tight">
+                    {activeUploadMode === 'drivers' ? 'Drivers Sheet Upload Completed' : 'Cabs Sheet Upload Completed'}
+                  </h3>
                   <p className="text-xs text-slate-500">
-                    File <span className="font-semibold text-slate-700">{selectedFile?.name}</span> • Processed by {uploaderName}
+                    File <span className="font-semibold text-slate-700">{(activeUploadMode === 'drivers' ? driversFile : cabsFile)?.name}</span> • Processed by {uploaderName}
                   </p>
                 </div>
               </div>
 
               <span className="text-xs font-mono bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200">
-                Total Records: {uploadResult.totalRecordsProcessed}
+                Total Records Read: {uploadResult.totalRecordsProcessed}
               </span>
             </div>
 
@@ -413,10 +571,14 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
               </div>
             </div>
 
-            {/* Formatted Text Sentence Summary as specified in prompt */}
+            {/* Formatted Text Sentence Summary */}
             <div className="p-4 bg-slate-50 border border-slate-200 rounded-xl text-xs font-medium text-slate-700 leading-relaxed text-center">
               <span className="font-bold text-slate-900">Summary: </span>
-              {uploadResult.driversAdded} drivers added, {uploadResult.driversUpdated} drivers updated, {uploadResult.cabsAdded} cabs added, {uploadResult.cabsUpdated} cabs updated.
+              {uploadResult.driversAdded + uploadResult.driversUpdated > 0 ? (
+                <span>Read {uploadResult.totalRecordsProcessed} driver rows ({uploadResult.driversAdded} added, {uploadResult.driversUpdated} updated) into the drivers collection.</span>
+              ) : (
+                <span>Read {uploadResult.totalRecordsProcessed} cab rows ({uploadResult.cabsAdded} added, {uploadResult.cabsUpdated} updated) into the cabs collection.</span>
+              )}
             </div>
           </div>
 
@@ -460,7 +622,7 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
               className="inline-flex items-center gap-2 bg-slate-100 hover:bg-slate-200 text-slate-800 text-xs font-bold px-5 py-2.5 rounded-xl border border-slate-200 transition-colors cursor-pointer w-full sm:w-auto justify-center"
             >
               <RefreshCw className="w-4 h-4 text-slate-600" />
-              <span>Upload Another Data Sheet</span>
+              <span>Upload Another Sheet</span>
             </button>
 
             <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">

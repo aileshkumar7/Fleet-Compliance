@@ -30,7 +30,6 @@ export function parseDateValue(val: any): string {
 
   if (val instanceof Date) {
     if (isNaN(val.getTime())) return '';
-    // Use local Date components to prevent UTC timezone date shifts
     const y = val.getFullYear();
     const m = String(val.getMonth() + 1).padStart(2, '0');
     const d = String(val.getDate()).padStart(2, '0');
@@ -49,10 +48,14 @@ export function parseDateValue(val: any): string {
   }
 
   const str = String(val).trim();
-  if (!str || str === 'N/A' || str.toLowerCase() === 'null') return '';
+  if (!str) return '';
+  const lowerStr = str.toLowerCase();
+  if (['n/a', 'na', 'null', 'none', 'nil', '-', 'pending', 'expired'].includes(lowerStr)) {
+    return '';
+  }
 
-  // Match DD/MM/YYYY or DD-MM-YYYY or D/M/YYYY
-  const dmy = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})$/);
+  // Match DD/MM/YYYY, DD-MM-YYYY, or DD.MM.YYYY
+  const dmy = str.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})$/);
   if (dmy) {
     const day = dmy[1].padStart(2, '0');
     const month = dmy[2].padStart(2, '0');
@@ -60,8 +63,8 @@ export function parseDateValue(val: any): string {
     return `${year}-${month}-${day}`;
   }
 
-  // Match YYYY-MM-DD or YYYY/MM/DD
-  const ymd = str.match(/^(\d{4})[\/\-](\d{1,2})[\/\-](\d{1,2})$/);
+  // Match YYYY-MM-DD, YYYY/MM/DD, or YYYY.MM.DD
+  const ymd = str.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})$/);
   if (ymd) {
     const year = ymd[1];
     const month = ymd[2].padStart(2, '0');
@@ -69,17 +72,22 @@ export function parseDateValue(val: any): string {
     return `${year}-${month}-${day}`;
   }
 
-  // Match DD/MM/YY or DD-MM-YY
-  const dmyShort = str.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2})$/);
-  if (dmyShort) {
-    const day = dmyShort[1].padStart(2, '0');
-    const month = dmyShort[2].padStart(2, '0');
-    let year = parseInt(dmyShort[3], 10);
-    year = year < 50 ? 2000 + year : 1900 + year;
-    return `${year}-${month}-${day}`;
+  // Match DD-MMM-YYYY or DD MMM YYYY (e.g., 25-Oct-2028 or 25 Oct 2028)
+  const dMmmY = str.match(/^(\d{1,2})[\s\/\-\.]([a-zA-Z]{3,9})[\s\/\-\.](\d{4})$/);
+  if (dMmmY) {
+    const day = dMmmY[1].padStart(2, '0');
+    const monthStr = dMmmY[2].substring(0, 3).toLowerCase();
+    const year = dMmmY[3];
+    const monthsMap: Record<string, string> = {
+      jan: '01', feb: '02', mar: '03', apr: '04', may: '05', jun: '06',
+      jul: '07', aug: '08', sep: '09', oct: '10', nov: '11', dec: '12'
+    };
+    if (monthsMap[monthStr]) {
+      return `${year}-${monthsMap[monthStr]}-${day}`;
+    }
   }
 
-  // Fallback date parsing using local components
+  // Fallback date parsing with local date normalization
   const parsedDate = new Date(str);
   if (!isNaN(parsedDate.getTime())) {
     const y = parsedDate.getFullYear();
@@ -118,56 +126,80 @@ function alphaNumKey(str: string): string {
 const DRIVER_FIELD_MAP: Record<string, keyof Driver> = {
   name: 'name',
   drivername: 'name',
+  nameofdriver: 'name',
   fullname: 'name',
   driverfullname: 'name',
+  driver: 'name',
+  driversname: 'name',
+  drivernameinbank: 'name',
+  drivernameasondl: 'name',
+
+  driverid: 'driverId',
+  id: 'driverId',
+  empid: 'driverId',
+  employeeid: 'driverId',
+  empcode: 'driverId',
+  employeecode: 'driverId',
+  drivercode: 'driverId',
+  code: 'driverId',
+  vendordriverid: 'driverId',
+  driveruniqueid: 'driverId',
+  uniqueid: 'driverId',
+  drid: 'driverId',
+  slno: 'driverId',
+  sno: 'driverId',
+  srno: 'driverId',
+  serialno: 'driverId',
+  sn: 'driverId',
 
   clientname: 'clientName',
   client: 'clientName',
+  clientid: 'clientId',
   vendorname: 'clientName',
-  accountname: 'clientName',
+  vendor: 'clientName',
+  organization: 'clientName',
+  company: 'clientName',
+  unit: 'clientName',
 
   overallcompliancestatus: 'overallComplianceStatus',
   compliancestatus: 'overallComplianceStatus',
-  overallcompliance: 'overallComplianceStatus',
+  compliance: 'overallComplianceStatus',
+  overallstatus: 'overallComplianceStatus',
 
   city: 'city',
   offices: 'offices',
   office: 'offices',
+  hub: 'offices',
   location: 'offices',
 
   driverlicensenumber: 'driverLicenseNumber',
   dlnumber: 'driverLicenseNumber',
   licensenumber: 'driverLicenseNumber',
-  driverlicence: 'driverLicenseNumber',
-  driverlicense: 'driverLicenseNumber',
   dlno: 'driverLicenseNumber',
+  license: 'driverLicenseNumber',
+  dlnum: 'driverLicenseNumber',
+  driverdl: 'driverLicenseNumber',
+  driverdlno: 'driverLicenseNumber',
+  drivinglicensenumber: 'driverLicenseNumber',
+  drivinglicenseno: 'driverLicenseNumber',
+  drivinglicense: 'driverLicenseNumber',
 
   driverlicenseexpirydate: 'driverLicenseExpiryDate',
-  driverlicenceexpirydate: 'driverLicenseExpiryDate',
   dlexpiry: 'driverLicenseExpiryDate',
   dlexpirydate: 'driverLicenseExpiryDate',
-  licenseexpirydate: 'driverLicenseExpiryDate',
-  licenceexpirydate: 'driverLicenseExpiryDate',
-
-  driverid: 'driverId',
-  driveridnumber: 'driverId',
-  drivercode: 'driverId',
-  driverno: 'driverId',
-  drivernumber: 'driverId',
-  id: 'driverId',
-  empid: 'driverId',
-  employeeid: 'driverId',
+  licenserenewaldate: 'driverLicenseExpiryDate',
+  dlexpiration: 'driverLicenseExpiryDate',
+  dlexpirationdate: 'driverLicenseExpiryDate',
 
   inductiondate: 'inductionDate',
-  dateofinduction: 'inductionDate',
-
   badgenumber: 'badgeNumber',
   badgeno: 'badgeNumber',
   badge: 'badgeNumber',
+  badgeid: 'badgeNumber',
 
   badgeexpirydate: 'badgeExpiryDate',
   badgeexpiry: 'badgeExpiryDate',
-  badgeexpirationdate: 'badgeExpiryDate',
+  badgeexpiration: 'badgeExpiryDate',
 
   driverage: 'driverAge',
   age: 'driverAge',
@@ -176,62 +208,66 @@ const DRIVER_FIELD_MAP: Record<string, keyof Driver> = {
 
   backgroundcheckstatus: 'backgroundCheckStatus',
   bgvstatus: 'backgroundCheckStatus',
-  backgroundcheck: 'backgroundCheckStatus',
   bgv: 'backgroundCheckStatus',
-
   bgvexpirydate: 'bgvExpiryDate',
   bgvexpiry: 'bgvExpiryDate',
-  bgvexpirationdate: 'bgvExpiryDate',
-  backgroundcheckexpirydate: 'bgvExpiryDate',
 
   policeverificationstatus: 'policeVerificationStatus',
   pvstatus: 'policeVerificationStatus',
-  policeverification: 'policeVerificationStatus',
-
+  pv: 'policeVerificationStatus',
   policeverificationexpirydate: 'policeVerificationExpiryDate',
   pvexpirydate: 'policeVerificationExpiryDate',
   pvexpiry: 'policeVerificationExpiryDate',
-  policeverificationexpiry: 'policeVerificationExpiryDate',
+  pvcdate: 'policeVerificationExpiryDate',
 
   overallapprovalstatus: 'overallApprovalStatus',
   approvalstatus: 'overallApprovalStatus',
+  approval: 'overallApprovalStatus',
 
   phonenumbers: 'phoneNumbers',
   phone: 'phoneNumbers',
   phonenumber: 'phoneNumbers',
   mobilenumber: 'phoneNumbers',
   mobile: 'phoneNumbers',
+  contact: 'phoneNumbers',
   contactnumber: 'phoneNumbers',
+  drivermobile: 'phoneNumbers',
+  driverphone: 'phoneNumbers',
+  mob: 'phoneNumbers',
 
   address: 'address',
   currentaddress: 'currentAddress',
+  permanentaddress: 'address',
 
   govtidtype: 'govtIdType',
   govtidnumber: 'govtIdNumber',
-  govtid: 'govtIdNumber',
+  idtype: 'govtIdType',
+  idnumber: 'govtIdNumber',
+  aadhaar: 'govtIdNumber',
+  pan: 'govtIdNumber',
 
   medicalverificationstatus: 'medicalVerificationStatus',
   medicalstatus: 'medicalVerificationStatus',
-
+  medical: 'medicalVerificationStatus',
   medicalverificationexpirydate: 'medicalVerificationExpiryDate',
   medicalexpirydate: 'medicalVerificationExpiryDate',
   medicalexpiry: 'medicalVerificationExpiryDate',
-  medicalverificationexpiry: 'medicalVerificationExpiryDate',
 
   trainingverificationstatus: 'trainingVerificationStatus',
   trainingstatus: 'trainingVerificationStatus',
-
+  training: 'trainingVerificationStatus',
   trainingverificationexpirydate: 'trainingVerificationExpiryDate',
   trainingexpirydate: 'trainingVerificationExpiryDate',
   trainingexpiry: 'trainingVerificationExpiryDate',
-  trainingverificationexpiry: 'trainingVerificationExpiryDate',
 
   eyetestexpirydate: 'eyeTestExpiryDate',
   eyetestexpiry: 'eyeTestExpiryDate',
-  eyecheckexpirydate: 'eyeTestExpiryDate',
+  eyetest: 'eyeTestExpiryDate',
+  eyetestdate: 'eyeTestExpiryDate',
 
   status: 'status',
   driverstatus: 'status',
+  activestatus: 'status',
 
   inactivityreason: 'inactivityReason',
   reasonforinactivity: 'inactivityReason',
@@ -239,19 +275,9 @@ const DRIVER_FIELD_MAP: Record<string, keyof Driver> = {
   reasonforinactiveness: 'inactivityReason',
   inactivenessreason: 'inactivityReason',
   reason: 'inactivityReason',
-
-  deactivationdate: 'deactivationDate',
-  profileimageurl: 'profileImageUrl',
-  loudocumenturl: 'louDocumentUrl',
+  remarks: 'inactivityReason',
+  remark: 'inactivityReason',
   comments: 'comments',
-  approvedby: 'approvedBy',
-  approvedtime: 'approvedTime',
-  createdby: 'createdBy',
-  createdtime: 'createdTime',
-  updatedby: 'updatedBy',
-  updatedtime: 'updatedTime',
-  documentsuploaded: 'documentsUploaded',
-  clientid: 'clientId',
 };
 
 // Maps normalized headers to cab field names
@@ -338,9 +364,67 @@ const CAB_DATE_FIELDS = new Set([
   'updatedTime'
 ]);
 
+function getSheetJsonWithHeaderDetection(sheet: XLSX.WorkSheet): { rawRows: any[]; sheetNameLog: string } {
+  const defaultRows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+  if (defaultRows.length === 0) return { rawRows: [], sheetNameLog: '0 rows' };
+
+  const firstRowKeys = Object.keys(defaultRows[0]).map(alphaNumKey);
+  const knownDriverOrCabKeys = new Set([
+    'driverid', 'drivername', 'name', 'driverlicensenumber', 'licensenumber', 'badgenumber',
+    'bgvstatus', 'policeverificationstatus', 'phonenumbers', 'phone', 'city', 'status',
+    'etsvehicleid', 'registrationnumber', 'vehicletype', 'insuranceexpirydate'
+  ]);
+
+  const matchCount = firstRowKeys.filter(k => knownDriverOrCabKeys.has(k)).length;
+  if (matchCount >= 2) {
+    return { rawRows: defaultRows, sheetNameLog: `${defaultRows.length} rows` };
+  }
+
+  // Inspect matrix rows to find header row if top rows are title banners
+  const matrix: any[][] = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: '' });
+  let bestHeaderRowIndex = -1;
+  let maxScore = 0;
+
+  for (let r = 0; r < Math.min(10, matrix.length); r++) {
+    const row = matrix[r];
+    if (!Array.isArray(row)) continue;
+    let score = 0;
+    row.forEach(cell => {
+      const key = alphaNumKey(String(cell));
+      if (knownDriverOrCabKeys.has(key) || key.includes('driver') || key.includes('license') || key.includes('vehicle') || key.includes('reg') || key.includes('expiry')) {
+        score++;
+      }
+    });
+    if (score > maxScore) {
+      maxScore = score;
+      bestHeaderRowIndex = r;
+    }
+  }
+
+  if (bestHeaderRowIndex >= 0 && maxScore >= 2) {
+    const rows: any[] = [];
+    const headerRow = matrix[bestHeaderRowIndex].map(c => String(c).trim());
+    for (let r = bestHeaderRowIndex + 1; r < matrix.length; r++) {
+      const rowData = matrix[r];
+      if (!rowData || rowData.every((val: any) => !val)) continue;
+      const rowObj: Record<string, any> = {};
+      headerRow.forEach((colName, cIdx) => {
+        if (colName) {
+          rowObj[colName] = rowData[cIdx] !== undefined ? rowData[cIdx] : '';
+        }
+      });
+      rows.push(rowObj);
+    }
+    return { rawRows: rows, sheetNameLog: `${rows.length} rows (detected header at row ${bestHeaderRowIndex + 1})` };
+  }
+
+  return { rawRows: defaultRows, sheetNameLog: `${defaultRows.length} rows` };
+}
+
 export async function processDataSheetUpload(
   file: File, 
   uploadedBy: string,
+  uploadType: 'cabs' | 'drivers' | 'all' = 'all',
   overrideClientId?: string,
   overrideClientName?: string
 ): Promise<UploadResult> {
@@ -360,55 +444,95 @@ export async function processDataSheetUpload(
   const uploadBatchId = 'batch-' + Date.now();
   const uploadChanges: UploadChangeRecord[] = [];
 
-  // Locate the 4 target sheets
+  // Locate target sheets
   const sheetNames = workbook.SheetNames;
+  console.info(`[Excel Parser] Reading uploaded file "${file.name}" (Target uploadType: ${uploadType}). Available tabs:`, sheetNames);
   
-  const findSheet = (targetType: 'activeDriver' | 'inactiveDriver' | 'activeCab' | 'inactiveCab') => {
-    return sheetNames.find(s => {
+  let activeDriversSheetName: string | undefined;
+  let inactiveDriversSheetName: string | undefined;
+  let activeCabsSheetName: string | undefined;
+  let inactiveCabsSheetName: string | undefined;
+
+  if (uploadType === 'drivers') {
+    activeDriversSheetName = sheetNames.find(s => {
       const name = s.trim().toLowerCase();
-      if (targetType === 'activeDriver') {
-        return name.includes('active') && name.includes('driver') && !name.includes('inactive');
-      }
-      if (targetType === 'inactiveDriver') {
-        return name.includes('inactive') && name.includes('driver');
-      }
-      if (targetType === 'activeCab') {
-        return name.includes('active') && (name.includes('cab') || name.includes('vehicle')) && !name.includes('inactive');
-      }
-      if (targetType === 'inactiveCab') {
-        return name.includes('inactive') && (name.includes('cab') || name.includes('vehicle'));
-      }
-      return false;
+      return name.includes('active') && !name.includes('inactive') && !name.includes('deactive');
     });
-  };
+    inactiveDriversSheetName = sheetNames.find(s => {
+      const name = s.trim().toLowerCase();
+      return name.includes('inactive') || name.includes('deactive') || name.includes('resigned');
+    });
+  } else if (uploadType === 'cabs') {
+    activeCabsSheetName = sheetNames.find(s => {
+      const name = s.trim().toLowerCase();
+      return name.includes('active') && !name.includes('inactive') && !name.includes('deactive');
+    });
+    inactiveCabsSheetName = sheetNames.find(s => {
+      const name = s.trim().toLowerCase();
+      return name.includes('inactive') || name.includes('deactive') || name.includes('resigned');
+    });
+  } else {
+    const findSheet = (targetType: 'activeDriver' | 'inactiveDriver' | 'activeCab' | 'inactiveCab') => {
+      return sheetNames.find(s => {
+        const name = s.trim().toLowerCase();
+        if (targetType === 'activeDriver') {
+          return name.includes('active') && name.includes('driver') && !name.includes('inactive') && !name.includes('deactive');
+        }
+        if (targetType === 'inactiveDriver') {
+          return (name.includes('inactive') || name.includes('deactive') || name.includes('resigned')) && name.includes('driver');
+        }
+        if (targetType === 'activeCab') {
+          return name.includes('active') && (name.includes('cab') || name.includes('vehicle')) && !name.includes('inactive') && !name.includes('deactive');
+        }
+        if (targetType === 'inactiveCab') {
+          return (name.includes('inactive') || name.includes('deactive') || name.includes('resigned')) && (name.includes('cab') || name.includes('vehicle'));
+        }
+        return false;
+      });
+    };
 
-  const activeDriversSheetName = findSheet('activeDriver') || sheetNames.find(s => s.toLowerCase() === 'active drivers');
-  const inactiveDriversSheetName = findSheet('inactiveDriver') || sheetNames.find(s => s.toLowerCase() === 'inactive drivers');
-  const activeCabsSheetName = findSheet('activeCab') || sheetNames.find(s => s.toLowerCase() === 'active cabs');
-  const inactiveCabsSheetName = findSheet('inactiveCab') || sheetNames.find(s => s.toLowerCase() === 'inactive cabs');
+    activeDriversSheetName = findSheet('activeDriver') || sheetNames.find(s => s.toLowerCase().includes('active') && !s.toLowerCase().includes('cab') && !s.toLowerCase().includes('inactive'));
+    inactiveDriversSheetName = findSheet('inactiveDriver') || sheetNames.find(s => (s.toLowerCase().includes('inactive') || s.toLowerCase().includes('deactive') || s.toLowerCase().includes('resigned')) && !s.toLowerCase().includes('cab'));
+    activeCabsSheetName = findSheet('activeCab') || sheetNames.find(s => s.toLowerCase().includes('active') && (s.toLowerCase().includes('cab') || s.toLowerCase().includes('vehicle')) && !s.toLowerCase().includes('inactive'));
+    inactiveCabsSheetName = findSheet('inactiveCab') || sheetNames.find(s => (s.toLowerCase().includes('inactive') || s.toLowerCase().includes('deactive')) && (s.toLowerCase().includes('cab') || s.toLowerCase().includes('vehicle')));
+  }
 
-  // Fetch existing Firestore records for matching
-  const existingDriversSnap = await getDocs(collection(db, 'drivers'));
-  const driversMap = new Map<string, { id: string; data: any }>();
-  existingDriversSnap.forEach(docSnap => {
-    const data = docSnap.data();
-    if (data.driverId) {
-      driversMap.set(String(data.driverId).trim().toLowerCase(), { id: docSnap.id, data });
-    }
-  });
+  // Fetch existing Firestore records for matching (ONLY for the relevant entity type)
+  const driversMapByDL = new Map<string, { id: string; data: any }>();
+  const driversMapByNameAndPhone = new Map<string, { id: string; data: any }>();
 
-  const existingCabsSnap = await getDocs(collection(db, 'cabs'));
+  if (uploadType === 'drivers' || uploadType === 'all') {
+    const existingDriversSnap = await getDocs(collection(db, 'drivers'));
+    existingDriversSnap.forEach(docSnap => {
+      const data = docSnap.data();
+      const dlVal = cleanString(data.driverLicenseNumber).toLowerCase();
+      const nameVal = cleanString(data.name).toLowerCase();
+      const phoneVal = cleanString(data.phoneNumbers).toLowerCase();
+
+      if (dlVal) {
+        driversMapByDL.set(dlVal, { id: docSnap.id, data });
+      }
+      if (nameVal && phoneVal) {
+        driversMapByNameAndPhone.set(`${nameVal}|${phoneVal}`, { id: docSnap.id, data });
+      }
+    });
+  }
+
   const cabsMapByEts = new Map<string, { id: string; data: any }>();
   const cabsMapByReg = new Map<string, { id: string; data: any }>();
-  existingCabsSnap.forEach(docSnap => {
-    const data = docSnap.data();
-    if (data.etsVehicleId) {
-      cabsMapByEts.set(String(data.etsVehicleId).trim().toLowerCase(), { id: docSnap.id, data });
-    }
-    if (data.registrationNumber) {
-      cabsMapByReg.set(String(data.registrationNumber).trim().toLowerCase(), { id: docSnap.id, data });
-    }
-  });
+
+  if (uploadType === 'cabs' || uploadType === 'all') {
+    const existingCabsSnap = await getDocs(collection(db, 'cabs'));
+    existingCabsSnap.forEach(docSnap => {
+      const data = docSnap.data();
+      if (data.etsVehicleId) {
+        cabsMapByEts.set(String(data.etsVehicleId).trim().toLowerCase(), { id: docSnap.id, data });
+      }
+      if (data.registrationNumber) {
+        cabsMapByReg.set(String(data.registrationNumber).trim().toLowerCase(), { id: docSnap.id, data });
+      }
+    });
+  }
 
   const clientsToInsert = new Map<string, string>(); // clientId -> clientName
 
@@ -417,11 +541,12 @@ export async function processDataSheetUpload(
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) return;
 
-    const rawRows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    const { rawRows, sheetNameLog } = getSheetJsonWithHeaderDetection(sheet);
+    console.info(`[Excel Parser - Drivers] Parsing tab "${sheetName}". Raw rows found: ${rawRows.length} (${sheetNameLog}). Default status: ${status}.`);
 
     for (let index = 0; index < rawRows.length; index++) {
       const row = rawRows[index];
-      const rowIndex = index + 2; // 1-indexed header + row index
+      const rowIndex = index + 2;
 
       // Construct driver object
       const driverData: Partial<Driver> = {
@@ -446,12 +571,35 @@ export async function processDataSheetUpload(
         }
       });
 
-      // Validation check
-      const driverId = cleanString(driverData.driverId);
-      const name = cleanString(driverData.name);
+      // Override or confirm status (strictly lowercased 'active' or 'inactive')
+      if (driverData.status && typeof driverData.status === 'string') {
+        const rowStatus = driverData.status.toLowerCase();
+        if (rowStatus.includes('inactive') || rowStatus.includes('deactive') || rowStatus.includes('resigned') || rowStatus.includes('terminated') || rowStatus.includes('suspended')) {
+          driverData.status = 'inactive';
+        } else if (rowStatus.includes('active')) {
+          driverData.status = 'active';
+        } else {
+          driverData.status = status;
+        }
+      } else {
+        driverData.status = status;
+      }
+
+      // Validation check & fallback ID generation
+      let driverId = cleanString(driverData.driverId);
+      let name = cleanString(driverData.name);
+      let dl = cleanString(driverData.driverLicenseNumber);
+
+      if (!driverId && (name || driverData.phoneNumbers || dl)) {
+        const seedPart = (name || driverData.phoneNumbers || dl || `ROW-${rowIndex}`)
+          .replace(/[^a-zA-Z0-9]/g, '')
+          .toUpperCase()
+          .slice(0, 10);
+        driverId = `AUTO-DRV-${seedPart}-${rowIndex}-${Date.now()}`;
+        driverData.driverId = driverId;
+      }
 
       if (!driverId && !name) {
-        // Skip empty or invalid row
         result.failedRows.push({
           sheetName,
           rowIndex,
@@ -473,18 +621,30 @@ export async function processDataSheetUpload(
         if (!driverData.clientName) driverData.clientName = 'Air India T3';
       }
 
-      // Collect client information if present
       if (driverData.clientId && driverData.clientName) {
         clientsToInsert.set(driverData.clientId, driverData.clientName);
       }
 
-      // Check if driver exists by driverId
-      const matchedKey = driverId.toLowerCase();
-      const existing = matchedKey ? driversMap.get(matchedKey) : null;
+      // Match existing driver strictly:
+      // 1) Match by Driver License Number if present
+      // 2) If License Number is blank, fallback to Name + Phone Number together
+      const dlKey = dl.toLowerCase();
+      const nameKey = name.toLowerCase();
+      const phoneKey = cleanString(driverData.phoneNumbers).toLowerCase();
+
+      let existing: { id: string; data: any } | null = null;
+
+      if (dlKey) {
+        existing = driversMapByDL.get(dlKey) || null;
+      } else if (nameKey && phoneKey) {
+        existing = driversMapByNameAndPhone.get(`${nameKey}|${phoneKey}`) || null;
+      }
+
+      const finalStatus: 'active' | 'inactive' = driverData.status as 'active' | 'inactive';
 
       try {
         if (existing) {
-          // 1. Archive previous version to sub-collection "driverHistory"
+          // 1. Archive previous version
           try {
             await addDoc(collection(db, 'drivers', existing.id, 'driverHistory'), {
               ...existing.data,
@@ -496,9 +656,9 @@ export async function processDataSheetUpload(
             console.warn('Failed to archive driver history snapshot:', histErr);
           }
 
-          // 2. Determine changes for audit trail
+          // 2. Audit trail
           const oldStatus = (existing.data.status || 'active').toLowerCase();
-          const newStatus = status.toLowerCase();
+          const newStatus = finalStatus;
 
           const changedKeys: string[] = [];
           Object.keys(driverData).forEach(k => {
@@ -530,12 +690,17 @@ export async function processDataSheetUpload(
           // Update existing
           await updateDoc(doc(db, 'drivers', existing.id), {
             ...driverData,
+            status: finalStatus,
             updatedBy: uploadedBy || 'Admin',
             updatedTime: uploadTimestamp,
             uploadBatchId,
             uploadBatchFileName: file.name,
           });
           result.driversUpdated++;
+
+          const updatedDriverData = { id: existing.id, data: { ...existing.data, ...driverData, status: finalStatus } };
+          if (dlKey) driversMapByDL.set(dlKey, updatedDriverData);
+          if (nameKey && phoneKey) driversMapByNameAndPhone.set(`${nameKey}|${phoneKey}`, updatedDriverData);
         } else {
           // Insert new driver
           const newDocRef = await addDoc(collection(db, 'drivers'), {
@@ -578,22 +743,22 @@ export async function processDataSheetUpload(
             updatedBy: uploadedBy,
             updatedTime: uploadTimestamp,
             documentsUploaded: driverData.documentsUploaded || [],
-            status,
+            status: finalStatus,
             clientId: driverData.clientId || '',
             uploadBatchId,
             uploadBatchFileName: file.name,
           });
 
-          if (driverId) {
-            driversMap.set(driverId.toLowerCase(), { id: newDocRef.id, data: driverData });
-          }
+          const createdDriverData = { id: newDocRef.id, data: { ...driverData, status: finalStatus } };
+          if (dlKey) driversMapByDL.set(dlKey, createdDriverData);
+          if (nameKey && phoneKey) driversMapByNameAndPhone.set(`${nameKey}|${phoneKey}`, createdDriverData);
 
           uploadChanges.push({
             recordId: newDocRef.id,
             identifier: driverData.name || driverData.driverId || 'New Driver',
             type: 'driver',
             changeType: 'added',
-            details: `New driver added as ${status.toUpperCase()}`
+            details: `New driver added as ${finalStatus.toUpperCase()}`
           });
 
           result.driversAdded++;
@@ -614,7 +779,8 @@ export async function processDataSheetUpload(
     const sheet = workbook.Sheets[sheetName];
     if (!sheet) return;
 
-    const rawRows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+    const { rawRows, sheetNameLog } = getSheetJsonWithHeaderDetection(sheet);
+    console.info(`[Excel Parser - Cabs] Parsing tab "${sheetName}". Raw rows found: ${rawRows.length} (${sheetNameLog}). Default status: ${status}.`);
 
     for (let index = 0; index < rawRows.length; index++) {
       const row = rawRows[index];
@@ -795,11 +961,48 @@ export async function processDataSheetUpload(
     }
   };
 
-  // Process all 4 sheets if present
-  if (activeDriversSheetName) await parseDriverSheet(activeDriversSheetName, 'active');
-  if (inactiveDriversSheetName) await parseDriverSheet(inactiveDriversSheetName, 'inactive');
-  if (activeCabsSheetName) await parseCabSheet(activeCabsSheetName, 'active');
-  if (inactiveCabsSheetName) await parseCabSheet(inactiveCabsSheetName, 'inactive');
+  // Process sheets based on uploadType
+  if (uploadType === 'drivers') {
+    if (activeDriversSheetName) await parseDriverSheet(activeDriversSheetName, 'active');
+    if (inactiveDriversSheetName) await parseDriverSheet(inactiveDriversSheetName, 'inactive');
+
+    // Fallback: If no drivers were parsed yet, check other tabs in this driver file
+    if (result.driversAdded + result.driversUpdated === 0) {
+      for (const sheetName of sheetNames) {
+        if (sheetName === activeDriversSheetName || sheetName === inactiveDriversSheetName) continue;
+        const sheet = workbook.Sheets[sheetName];
+        if (!sheet) continue;
+        const rawRows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+        if (rawRows.length === 0) continue;
+        const lowerName = sheetName.toLowerCase();
+        const defaultStatus = (lowerName.includes('inactive') || lowerName.includes('deactive') || lowerName.includes('resigned')) ? 'inactive' : 'active';
+        await parseDriverSheet(sheetName, defaultStatus);
+      }
+    }
+  } else if (uploadType === 'cabs') {
+    if (activeCabsSheetName) await parseCabSheet(activeCabsSheetName, 'active');
+    if (inactiveCabsSheetName) await parseCabSheet(inactiveCabsSheetName, 'inactive');
+
+    // Fallback: If no cabs were parsed yet, check other tabs in this cab file
+    if (result.cabsAdded + result.cabsUpdated === 0) {
+      for (const sheetName of sheetNames) {
+        if (sheetName === activeCabsSheetName || sheetName === inactiveCabsSheetName) continue;
+        const sheet = workbook.Sheets[sheetName];
+        if (!sheet) continue;
+        const rawRows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
+        if (rawRows.length === 0) continue;
+        const lowerName = sheetName.toLowerCase();
+        const defaultStatus = (lowerName.includes('inactive') || lowerName.includes('deactive') || lowerName.includes('resigned')) ? 'inactive' : 'active';
+        await parseCabSheet(sheetName, defaultStatus);
+      }
+    }
+  } else {
+    // Process all 4 sheets if present (legacy / 'all')
+    if (activeDriversSheetName) await parseDriverSheet(activeDriversSheetName, 'active');
+    if (inactiveDriversSheetName) await parseDriverSheet(inactiveDriversSheetName, 'inactive');
+    if (activeCabsSheetName) await parseCabSheet(activeCabsSheetName, 'active');
+    if (inactiveCabsSheetName) await parseCabSheet(inactiveCabsSheetName, 'inactive');
+  }
 
   // Insert/Sync Clients collection if any new client IDs were discovered
   if (clientsToInsert.size > 0) {
@@ -826,6 +1029,7 @@ export async function processDataSheetUpload(
     await addDoc(collection(db, 'uploadLogs'), {
       batchId: uploadBatchId,
       fileName: file.name,
+      uploadType,
       uploadedBy,
       uploadedAt: uploadTimestamp,
       recordCounts: result.totalRecordsProcessed,
@@ -846,8 +1050,194 @@ export async function processDataSheetUpload(
 }
 
 /**
- * Utility to generate a template Excel spreadsheet with all 4 sheets
+ * Utility to generate a Cabs template Excel spreadsheet (2 tabs: active Cabs, inactive cabs)
  */
+export function generateSampleCabsSheetTemplate() {
+  const wb = XLSX.utils.book_new();
+
+  const cabHeaders = [
+    'etsVehicleId', 'registrationNumber', 'clientName', 'clientId', 'vehicleType', 'overallComplianceStatus',
+    'manufacturingDate', 'registrationDate', 'ageYears', 'inductionDate', 'durationYears',
+    'insuranceExpiryDate', 'pollutionCertificateExpiryDate', 'permitExpiryDate', 'roadTaxExpiryDate',
+    'fitnessExpiryDate', 'vehicleServiceExpiryDate', 'ehs', 'comments', 'overallApprovalStatus',
+    'fuelType', 'vehicleOwnership', 'permitType', 'contractName', 'driverName', 'driverMobileNumber', 'driverComplianceStatus'
+  ];
+
+  const sampleActiveCabs = [
+    {
+      etsVehicleId: 'CAB-2001',
+      registrationNumber: 'KA-01-MJ-4521',
+      clientName: 'Air India T3',
+      clientId: 'CL-AIRINDIA',
+      vehicleType: 'Sedan (Dzire)',
+      overallComplianceStatus: 'Compliant',
+      manufacturingDate: '10/05/2021',
+      registrationDate: '01/06/2021',
+      ageYears: 3,
+      inductionDate: '15/06/2021',
+      durationYears: 3,
+      insuranceExpiryDate: '15/06/2026',
+      pollutionCertificateExpiryDate: '20/12/2026',
+      permitExpiryDate: '01/06/2026',
+      roadTaxExpiryDate: '01/06/2026',
+      fitnessExpiryDate: '01/06/2026',
+      vehicleServiceExpiryDate: '10/11/2025',
+      ehs: 'Compliant',
+      comments: 'GPS fitted, speed governor active',
+      overallApprovalStatus: 'Approved',
+      fuelType: 'CNG / Petrol',
+      vehicleOwnership: 'Vendor Owned',
+      permitType: 'State Tourist Permit',
+      contractName: 'IT Transport Contract',
+      driverName: 'Rajesh Kumar',
+      driverMobileNumber: '+91 9876543210',
+      driverComplianceStatus: 'Compliant',
+    }
+  ];
+
+  const sampleInactiveCabs = [
+    {
+      etsVehicleId: 'CAB-9901',
+      registrationNumber: 'KA-05-MH-8812',
+      clientName: 'Air India T3',
+      clientId: 'CL-AIRINDIA',
+      vehicleType: 'SUV (Ertiga)',
+      overallComplianceStatus: 'Non-Compliant',
+      manufacturingDate: '01/01/2016',
+      registrationDate: '15/01/2016',
+      ageYears: 8,
+      inductionDate: '01/02/2016',
+      durationYears: 8,
+      insuranceExpiryDate: '10/01/2024',
+      pollutionCertificateExpiryDate: '05/01/2024',
+      permitExpiryDate: '15/01/2024',
+      roadTaxExpiryDate: '15/01/2024',
+      fitnessExpiryDate: '15/01/2024',
+      vehicleServiceExpiryDate: '01/01/2024',
+      ehs: 'Non-Compliant',
+      comments: 'Age exceeded limit, decommissioned',
+      overallApprovalStatus: 'Deactivated',
+      fuelType: 'Diesel',
+      vehicleOwnership: 'Vendor Owned',
+      permitType: 'National Permit',
+      contractName: 'Retail Supply Chain',
+      driverName: 'Unassigned',
+      driverMobileNumber: '',
+      driverComplianceStatus: 'N/A',
+    }
+  ];
+
+  const wsActiveCabs = XLSX.utils.json_to_sheet(sampleActiveCabs, { header: cabHeaders });
+  const wsInactiveCabs = XLSX.utils.json_to_sheet(sampleInactiveCabs, { header: cabHeaders });
+
+  XLSX.utils.book_append_sheet(wb, wsActiveCabs, 'active Cabs');
+  XLSX.utils.book_append_sheet(wb, wsInactiveCabs, 'inactive cabs');
+
+  XLSX.writeFile(wb, 'Cabs_Data_Sheet_Template.xlsx');
+}
+
+/**
+ * Utility to generate a Drivers template Excel spreadsheet (2 tabs: active Drivers, inactive Drivers)
+ */
+export function generateSampleDriversSheetTemplate() {
+  const wb = XLSX.utils.book_new();
+
+  const driverHeaders = [
+    'driverId', 'name', 'clientName', 'clientId', 'overallComplianceStatus', 'city', 'offices',
+    'driverLicenseNumber', 'driverLicenseExpiryDate', 'inductionDate', 'badgeNumber', 'badgeExpiryDate',
+    'driverAge', 'backgroundCheckStatus', 'bgvExpiryDate', 'policeVerificationStatus',
+    'policeVerificationExpiryDate', 'overallApprovalStatus', 'phoneNumbers', 'address', 'currentAddress',
+    'govtIdType', 'govtIdNumber', 'medicalVerificationStatus', 'medicalVerificationExpiryDate',
+    'trainingVerificationStatus', 'trainingVerificationExpiryDate', 'comments', 'dateOfBirth',
+    'deactivationDate', 'profileImageUrl', 'louDocumentUrl', 'eyeTestExpiryDate', 'approvedBy'
+  ];
+
+  const sampleActiveDrivers = [
+    {
+      driverId: 'DR-101',
+      name: 'Rajesh Kumar',
+      clientName: 'Air India T3',
+      clientId: 'CL-AIRINDIA',
+      overallComplianceStatus: 'Compliant',
+      city: 'Bangalore',
+      offices: 'ECity Phase 1',
+      driverLicenseNumber: 'KA-01-2020-0098231',
+      driverLicenseExpiryDate: '25/10/2028',
+      inductionDate: '15/01/2022',
+      badgeNumber: 'BDG-8812',
+      badgeExpiryDate: '15/01/2026',
+      driverAge: 34,
+      backgroundCheckStatus: 'Verified',
+      bgvExpiryDate: '10/05/2027',
+      policeVerificationStatus: 'Verified',
+      policeVerificationExpiryDate: '12/08/2027',
+      overallApprovalStatus: 'Approved',
+      phoneNumbers: '+91 9876543210',
+      address: '12th Main Road, Indiranagar, Bangalore',
+      currentAddress: '12th Main Road, Indiranagar, Bangalore',
+      govtIdType: 'Aadhaar',
+      govtIdNumber: '4589-1234-9901',
+      medicalVerificationStatus: 'Passed',
+      medicalVerificationExpiryDate: '01/04/2026',
+      trainingVerificationStatus: 'Completed',
+      trainingVerificationExpiryDate: '15/01/2026',
+      comments: 'Regular fleet driver',
+      dateOfBirth: '14/06/1990',
+      deactivationDate: '',
+      profileImageUrl: '',
+      louDocumentUrl: '',
+      eyeTestExpiryDate: '01/04/2026',
+      approvedBy: 'Fleet Admin',
+    }
+  ];
+
+  const sampleInactiveDrivers = [
+    {
+      driverId: 'DR-902',
+      name: 'Suresh Patil',
+      clientName: 'Air India T3',
+      clientId: 'CL-AIRINDIA',
+      overallComplianceStatus: 'Non-Compliant',
+      city: 'Bangalore',
+      offices: 'Whitefield',
+      driverLicenseNumber: 'KA-02-2018-0012903',
+      driverLicenseExpiryDate: '10/02/2024',
+      inductionDate: '01/03/2020',
+      badgeNumber: 'BDG-4410',
+      badgeExpiryDate: '01/03/2024',
+      driverAge: 42,
+      backgroundCheckStatus: 'Expired',
+      bgvExpiryDate: '01/01/2024',
+      policeVerificationStatus: 'Pending',
+      policeVerificationExpiryDate: '01/01/2024',
+      overallApprovalStatus: 'Deactivated',
+      phoneNumbers: '+91 9876512345',
+      address: '8th Cross, Whitefield, Bangalore',
+      currentAddress: '8th Cross, Whitefield, Bangalore',
+      govtIdType: 'PAN',
+      govtIdNumber: 'ABCDE1234F',
+      medicalVerificationStatus: 'Expired',
+      medicalVerificationExpiryDate: '01/01/2024',
+      trainingVerificationStatus: 'Pending',
+      trainingVerificationExpiryDate: '01/01/2024',
+      comments: 'License expired, pending renewal',
+      dateOfBirth: '20/11/1982',
+      deactivationDate: '15/02/2024',
+      profileImageUrl: '',
+      louDocumentUrl: '',
+      eyeTestExpiryDate: '01/01/2024',
+      approvedBy: 'Fleet Supervisor',
+    }
+  ];
+
+  const wsActiveDrivers = XLSX.utils.json_to_sheet(sampleActiveDrivers, { header: driverHeaders });
+  const wsInactiveDrivers = XLSX.utils.json_to_sheet(sampleInactiveDrivers, { header: driverHeaders });
+
+  XLSX.utils.book_append_sheet(wb, wsActiveDrivers, 'active Drivers');
+  XLSX.utils.book_append_sheet(wb, wsInactiveDrivers, 'inactive Drivers');
+
+  XLSX.writeFile(wb, 'Drivers_Data_Sheet_Template.xlsx');
+}
 export function generateSampleDataSheetTemplate() {
   const wb = XLSX.utils.book_new();
 

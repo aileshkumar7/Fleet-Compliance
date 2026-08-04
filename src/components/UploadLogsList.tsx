@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { collection, getDocs, query, orderBy } from 'firebase/firestore';
+import { collection, getDocs, query, orderBy, deleteDoc, doc, where, writeBatch } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { UploadLog, UploadChangeRecord } from '../types';
 import { 
@@ -21,13 +21,22 @@ import {
   CheckCircle2, 
   Truck, 
   ChevronRight,
-  Filter
+  Filter,
+  Trash2,
+  AlertTriangle,
+  Trash,
+  ShieldAlert
 } from 'lucide-react';
 
 export const UploadLogsList: React.FC = () => {
   const [logs, setLogs] = useState<UploadLog[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [selectedLog, setSelectedLog] = useState<UploadLog | null>(null);
+
+  // Modal States
+  const [logToDelete, setLogToDelete] = useState<UploadLog | null>(null);
+  const [showWipeDataModal, setShowWipeDataModal] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   // Filters inside detail view
   const [filterType, setFilterType] = useState<'all' | 'added' | 'updated' | 'status_changed'>('all');
@@ -53,6 +62,75 @@ export const UploadLogsList: React.FC = () => {
   useEffect(() => {
     fetchLogs();
   }, []);
+
+  const handleDeleteLogOnly = async (log: UploadLog) => {
+    setIsDeleting(true);
+    try {
+      await deleteDoc(doc(db, 'uploadLogs', log.id));
+      if (selectedLog?.id === log.id) {
+        setSelectedLog(null);
+      }
+      setLogToDelete(null);
+      await fetchLogs();
+    } catch (err) {
+      console.error('Failed to delete log:', err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleDeleteLogAndData = async (log: UploadLog) => {
+    setIsDeleting(true);
+    try {
+      if (log.batchId) {
+        const dQuery = query(collection(db, 'drivers'), where('uploadBatchId', '==', log.batchId));
+        const dSnap = await getDocs(dQuery);
+        const batch = writeBatch(db);
+        dSnap.forEach(d => batch.delete(d.ref));
+
+        const cQuery = query(collection(db, 'cabs'), where('uploadBatchId', '==', log.batchId));
+        const cSnap = await getDocs(cQuery);
+        cSnap.forEach(c => batch.delete(c.ref));
+
+        await batch.commit();
+      }
+
+      await deleteDoc(doc(db, 'uploadLogs', log.id));
+
+      if (selectedLog?.id === log.id) {
+        setSelectedLog(null);
+      }
+      setLogToDelete(null);
+      await fetchLogs();
+    } catch (err) {
+      console.error('Failed to delete log and data:', err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
+
+  const handleWipeAllData = async () => {
+    setIsDeleting(true);
+    try {
+      const dSnap = await getDocs(collection(db, 'drivers'));
+      const cSnap = await getDocs(collection(db, 'cabs'));
+      
+      const docsToDelete = [...dSnap.docs, ...cSnap.docs];
+      for (let i = 0; i < docsToDelete.length; i += 400) {
+        const batch = writeBatch(db);
+        const chunk = docsToDelete.slice(i, i + 400);
+        chunk.forEach(d => batch.delete(d.ref));
+        await batch.commit();
+      }
+
+      setShowWipeDataModal(false);
+      await fetchLogs();
+    } catch (err) {
+      console.error('Failed to wipe data:', err);
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   // Filtered changes for selected log
   const filteredChanges = selectedLog?.changes?.filter(ch => {
@@ -93,10 +171,19 @@ export const UploadLogsList: React.FC = () => {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-3">
             <span className="text-xs font-mono bg-slate-100 text-slate-700 px-3 py-1.5 rounded-lg border border-slate-200">
               Total Records Processed: {selectedLog.recordCounts}
             </span>
+
+            <button
+              onClick={() => setLogToDelete(selectedLog)}
+              className="inline-flex items-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-700 font-bold text-xs px-3 py-2 rounded-xl border border-red-200 transition-colors cursor-pointer"
+              title="Delete this upload audit log"
+            >
+              <Trash2 className="w-4 h-4 text-red-600" />
+              <span>Delete Log</span>
+            </button>
           </div>
         </div>
 
@@ -256,13 +343,66 @@ export const UploadLogsList: React.FC = () => {
             </div>
           )}
         </div>
+
+        {/* Delete Modal for selected log */}
+        {logToDelete && (
+          <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+            <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-5 border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
+              <div className="flex items-center gap-3 text-red-600">
+                <div className="p-3 bg-red-100 rounded-xl">
+                  <AlertTriangle className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="font-bold text-slate-900 text-lg">Delete Upload Audit Log</h3>
+                  <p className="text-xs text-slate-500">Choose how you want to delete this upload history log.</p>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs text-slate-700 space-y-1">
+                <p><span className="font-semibold text-slate-900">File:</span> {logToDelete.fileName}</p>
+                <p><span className="font-semibold text-slate-900">Uploaded:</span> {new Date(logToDelete.uploadedAt).toLocaleString()}</p>
+                <p><span className="font-semibold text-slate-900">Records:</span> {logToDelete.recordCounts}</p>
+              </div>
+
+              <div className="space-y-2.5">
+                <button
+                  onClick={() => handleDeleteLogOnly(logToDelete)}
+                  disabled={isDeleting}
+                  className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs py-3 px-4 rounded-xl border border-slate-200 transition-colors cursor-pointer flex items-center justify-between"
+                >
+                  <span>1. Delete Audit Log Only</span>
+                  <span className="text-[11px] font-normal text-slate-500">(Keeps driver/cab data)</span>
+                </button>
+
+                <button
+                  onClick={() => handleDeleteLogAndData(logToDelete)}
+                  disabled={isDeleting}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-3 px-4 rounded-xl transition-colors cursor-pointer flex items-center justify-between shadow-2xs"
+                >
+                  <span>2. Delete Log & All Records in Batch</span>
+                  <span className="text-[11px] font-normal text-red-100">(Deletes batch drivers/cabs)</span>
+                </button>
+              </div>
+
+              <div className="pt-2 flex justify-end">
+                <button
+                  onClick={() => setLogToDelete(null)}
+                  disabled={isDeleting}
+                  className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
 
   return (
     <div className="space-y-6 max-w-5xl mx-auto">
-      <div className="flex items-center justify-between bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-800 tracking-tight flex items-center gap-2.5">
             <div className="p-2 bg-amber-100 text-amber-700 rounded-xl">
@@ -271,17 +411,28 @@ export const UploadLogsList: React.FC = () => {
             <span>Upload History Audit Logs</span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Historical audit trail of weekly Excel uploads. Click any log to inspect granular record changes.
+            Historical audit trail of uploaded Excel sheets. You can delete old logs or clear uploaded data manually before uploading a fresh dataset.
           </p>
         </div>
 
-        <button
-          onClick={fetchLogs}
-          className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl border border-slate-200 transition-colors cursor-pointer"
-          title="Refresh Logs"
-        >
-          <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
-        </button>
+        <div className="flex items-center gap-2.5">
+          <button
+            onClick={() => setShowWipeDataModal(true)}
+            className="inline-flex items-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold text-xs px-3.5 py-2.5 rounded-xl transition-colors cursor-pointer shadow-2xs"
+            title="Clear all active driver & cab records to upload a fresh dataset"
+          >
+            <Trash2 className="w-4 h-4 text-red-600" />
+            <span>Clear Active Data</span>
+          </button>
+
+          <button
+            onClick={fetchLogs}
+            className="p-2.5 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl border border-slate-200 transition-colors cursor-pointer"
+            title="Refresh Logs"
+          >
+            <RefreshCw className={`w-4 h-4 ${isLoading ? 'animate-spin' : ''}`} />
+          </button>
+        </div>
       </div>
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
@@ -306,40 +457,54 @@ export const UploadLogsList: React.FC = () => {
                   <th className="px-6 py-3.5">Timestamp</th>
                   <th className="px-6 py-3.5 text-center">Total Records</th>
                   <th className="px-6 py-3.5">Processing Breakdown</th>
-                  <th className="px-6 py-3.5 text-right">Action</th>
+                  <th className="px-6 py-3.5 text-right">Actions</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
                 {logs.map((log) => (
                   <tr 
                     key={log.id} 
-                    onClick={() => setSelectedLog(log)}
-                    className="hover:bg-blue-50/50 transition-colors cursor-pointer group"
+                    className="hover:bg-blue-50/50 transition-colors group"
                   >
-                    <td className="px-6 py-4">
+                    <td 
+                      onClick={() => setSelectedLog(log)}
+                      className="px-6 py-4 cursor-pointer"
+                    >
                       <div className="flex items-center gap-2.5">
                         <FileSpreadsheet className="w-4 h-4 text-blue-600 shrink-0 group-hover:scale-110 transition-transform" />
                         <span className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors">{log.fileName}</span>
                       </div>
                     </td>
-                    <td className="px-6 py-4">
+                    <td 
+                      onClick={() => setSelectedLog(log)}
+                      className="px-6 py-4 cursor-pointer"
+                    >
                       <div className="flex items-center gap-1.5 text-slate-600">
                         <User className="w-3.5 h-3.5 text-slate-400" />
                         <span className="font-medium">{log.uploadedBy || 'Admin'}</span>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-slate-500 font-mono text-[11px]">
+                    <td 
+                      onClick={() => setSelectedLog(log)}
+                      className="px-6 py-4 text-slate-500 font-mono text-[11px] cursor-pointer"
+                    >
                       <div className="flex items-center gap-1.5">
                         <Calendar className="w-3.5 h-3.5 text-slate-400" />
                         <span>{log.uploadedAt ? new Date(log.uploadedAt).toLocaleString() : 'N/A'}</span>
                       </div>
                     </td>
-                    <td className="px-6 py-4 text-center font-bold text-slate-800 font-mono">
+                    <td 
+                      onClick={() => setSelectedLog(log)}
+                      className="px-6 py-4 text-center font-bold text-slate-800 font-mono cursor-pointer"
+                    >
                       <span className="bg-slate-100 border border-slate-200 px-2.5 py-1 rounded-md">
                         {log.recordCounts}
                       </span>
                     </td>
-                    <td className="px-6 py-4">
+                    <td 
+                      onClick={() => setSelectedLog(log)}
+                      className="px-6 py-4 cursor-pointer"
+                    >
                       {log.details ? (
                         <div className="flex items-center gap-2 text-[11px] font-medium flex-wrap">
                           <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
@@ -360,10 +525,27 @@ export const UploadLogsList: React.FC = () => {
                       )}
                     </td>
                     <td className="px-6 py-4 text-right">
-                      <span className="inline-flex items-center gap-1 text-xs font-bold text-blue-600 group-hover:translate-x-0.5 transition-transform">
-                        <span>Inspect Changes</span>
-                        <ChevronRight className="w-4 h-4" />
-                      </span>
+                      <div className="flex items-center justify-end gap-2">
+                        <button
+                          onClick={() => setSelectedLog(log)}
+                          className="inline-flex items-center gap-1 text-xs font-bold text-blue-600 hover:text-blue-800 px-2 py-1 rounded-lg hover:bg-blue-100/50 transition-colors cursor-pointer"
+                          title="Inspect changes"
+                        >
+                          <span>Inspect</span>
+                          <ChevronRight className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setLogToDelete(log);
+                          }}
+                          className="p-1.5 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors cursor-pointer"
+                          title="Delete log"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -372,6 +554,98 @@ export const UploadLogsList: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Delete Log Options Modal */}
+      {logToDelete && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-5 border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-red-600">
+              <div className="p-3 bg-red-100 rounded-xl">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-lg">Delete Upload Audit Log</h3>
+                <p className="text-xs text-slate-500">Choose how you want to delete this upload audit record.</p>
+              </div>
+            </div>
+
+            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-200 text-xs text-slate-700 space-y-1">
+              <p><span className="font-semibold text-slate-900">File:</span> {logToDelete.fileName}</p>
+              <p><span className="font-semibold text-slate-900">Uploaded:</span> {new Date(logToDelete.uploadedAt).toLocaleString()}</p>
+              <p><span className="font-semibold text-slate-900">Records:</span> {logToDelete.recordCounts}</p>
+            </div>
+
+            <div className="space-y-2.5">
+              <button
+                onClick={() => handleDeleteLogOnly(logToDelete)}
+                disabled={isDeleting}
+                className="w-full bg-slate-100 hover:bg-slate-200 text-slate-800 font-bold text-xs py-3 px-4 rounded-xl border border-slate-200 transition-colors cursor-pointer flex items-center justify-between"
+              >
+                <span>1. Delete Audit Log Only</span>
+                <span className="text-[11px] font-normal text-slate-500">(Keeps driver/cab data)</span>
+              </button>
+
+              <button
+                onClick={() => handleDeleteLogAndData(logToDelete)}
+                disabled={isDeleting}
+                className="w-full bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-3 px-4 rounded-xl transition-colors cursor-pointer flex items-center justify-between shadow-2xs"
+              >
+                <span>2. Delete Log & All Records in Batch</span>
+                <span className="text-[11px] font-normal text-red-100">(Deletes batch drivers/cabs)</span>
+              </button>
+            </div>
+
+            <div className="pt-2 flex justify-end">
+              <button
+                onClick={() => setLogToDelete(null)}
+                disabled={isDeleting}
+                className="px-4 py-2 text-xs font-semibold text-slate-600 hover:text-slate-800 cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Wipe All Active Data Confirmation Modal */}
+      {showWipeDataModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-5 border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-red-600">
+              <div className="p-3 bg-red-100 rounded-xl">
+                <ShieldAlert className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-lg">Clear All Driver & Cab Data</h3>
+                <p className="text-xs text-slate-500">Prepare for fresh Excel sheet upload</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Are you sure you want to delete <span className="font-bold text-slate-900">ALL active driver and cab records</span> in the database? This allows you to upload a completely new data sheet. The Expiry Engine will analyze only the newly uploaded dataset.
+            </p>
+
+            <div className="pt-2 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowWipeDataModal(false)}
+                disabled={isDeleting}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleWipeAllData}
+                disabled={isDeleting}
+                className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-2xs transition-colors cursor-pointer"
+              >
+                {isDeleting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                <span>Wipe Database Data</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

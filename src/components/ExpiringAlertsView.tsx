@@ -284,12 +284,17 @@ export const ExpiringAlertsView: React.FC = () => {
           {/* CABS ALERT SECTION */}
           {(categoryTab === 'all' || categoryTab === 'cabs') && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <Truck className="w-5 h-5 text-rose-600" />
-                  <span>Cab Vehicle Document Alerts ({filteredCabAnalyses.length})</span>
-                </h3>
-                <span className="text-xs font-mono text-slate-500">Sorted by urgency (fewest days remaining)</span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 pb-3 gap-2">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <Truck className="w-5 h-5 text-rose-600" />
+                    <span>Cabs — Expiring/Expired Documents</span>
+                  </h3>
+                  <span className="bg-rose-100 text-rose-800 font-extrabold px-3 py-1 rounded-full text-xs border border-rose-200 shrink-0">
+                    {filteredCabAnalyses.length} Cabs Flagged
+                  </span>
+                </div>
+                <span className="text-xs font-mono text-slate-500">Sorted by urgency (fewest days remaining first)</span>
               </div>
 
               {filteredCabAnalyses.length === 0 ? (
@@ -377,19 +382,24 @@ export const ExpiringAlertsView: React.FC = () => {
           {/* DRIVERS ALERT SECTION */}
           {(categoryTab === 'all' || categoryTab === 'drivers') && (
             <div className="space-y-4">
-              <div className="flex items-center justify-between border-b border-slate-200 pb-2">
-                <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                  <Users className="w-5 h-5 text-rose-600" />
-                  <span>Driver Verification Document Alerts ({filteredDriverAnalyses.length})</span>
-                </h3>
-                <span className="text-xs font-mono text-slate-500">Sorted by urgency (fewest days remaining)</span>
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 pb-3 gap-2">
+                <div className="flex items-center gap-3">
+                  <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
+                    <Users className="w-5 h-5 text-rose-600" />
+                    <span>Drivers — Expiring/Expired Documents</span>
+                  </h3>
+                  <span className="bg-rose-100 text-rose-800 font-extrabold px-3 py-1 rounded-full text-xs border border-rose-200 shrink-0">
+                    {filteredDriverAnalyses.length} Drivers Flagged
+                  </span>
+                </div>
+                <span className="text-xs font-mono text-slate-500">Sorted by urgency (fewest days remaining first)</span>
               </div>
 
               {filteredDriverAnalyses.length === 0 ? (
                 <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400 text-xs space-y-2">
                   <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
                   <p className="font-semibold text-slate-700">No driver document alerts found!</p>
-                  <p>All drivers have valid licenses, badges, BGV, police, medical, training, and eye test verifications.</p>
+                  <p>All drivers have valid licenses, BGV, police, medical, training, and eye test verifications.</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
