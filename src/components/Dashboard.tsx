@@ -11,6 +11,7 @@ import { Driver, Cab, Client, UploadLog } from '../types';
 import { analyzeCabExpiry, analyzeDriverExpiry } from '../utils/expiryEngine';
 import { purgeAllDummyData } from '../utils/seedDriversData';
 import { matchesCabSearch, matchesDriverSearch } from '../utils/searchUtils';
+import { getDriverCabNumber } from '../utils/cabDriverUtils';
 import { RecordDetailView } from './RecordDetailView';
 import { ReportDownloadModal } from './ReportDownloadModal';
 import { 
@@ -850,6 +851,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <div className="space-y-3">
                   {activeDrivers.map((driver) => {
                     const expiryAudit = analyzeDriverExpiry(driver);
+                    const cabNo = getDriverCabNumber(driver, cabs);
                     return (
                       <div
                         key={driver.id}
@@ -903,6 +905,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         )}
 
                         <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
+                          <div className="flex items-center gap-1.5 text-slate-700">
+                            <span className="text-slate-400">Cab No.:</span>
+                            <span className="font-bold text-blue-800 font-mono bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{cabNo}</span>
+                          </div>
                           <div className="flex items-center gap-1.5 text-slate-600">
                             <span className="text-slate-400">City:</span>
                             <span className="font-bold text-slate-800">{driver.city || 'Bangalore'}</span>
@@ -937,38 +943,44 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {inactiveDrivers.map((driver) => (
-                    <div
-                      key={driver.id}
-                      onClick={() => setSelectedRecord({ record: driver, type: 'driver' })}
-                      className="bg-white rounded-2xl border border-rose-200/80 shadow-2xs p-5 hover:shadow-md hover:border-rose-400 transition-all space-y-3 cursor-pointer group"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <h4 className="font-bold text-slate-900 group-hover:text-rose-700 transition-colors text-base">{driver.name || 'N/A'}</h4>
-                          <p className="text-xs font-mono text-slate-500 mt-0.5">
-                            DL: <span className="font-semibold text-slate-800">{driver.driverLicenseNumber || 'N/A'}</span>
-                          </p>
-                        </div>
-                        <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0">
-                          <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
-                          <span>{driver.overallComplianceStatus || 'Non-Compliant'}</span>
-                        </span>
-                      </div>
-
-                      <div className="pt-2 border-t border-slate-100 space-y-2 text-xs">
-                        <div className="flex items-center justify-between text-slate-700">
-                          <div className="flex items-center gap-1.5">
-                            <span className="text-slate-400">City:</span>
-                            <span className="font-bold text-slate-800">{driver.city || 'Bangalore'}</span>
+                  {inactiveDrivers.map((driver) => {
+                    const cabNo = getDriverCabNumber(driver, cabs);
+                    return (
+                      <div
+                        key={driver.id}
+                        onClick={() => setSelectedRecord({ record: driver, type: 'driver' })}
+                        className="bg-white rounded-2xl border border-rose-200/80 shadow-2xs p-5 hover:shadow-md hover:border-rose-400 transition-all space-y-3 cursor-pointer group"
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <h4 className="font-bold text-slate-900 group-hover:text-rose-700 transition-colors text-base">{driver.name || 'N/A'}</h4>
+                            <p className="text-xs font-mono text-slate-500 mt-0.5">
+                              DL: <span className="font-semibold text-slate-800">{driver.driverLicenseNumber || 'N/A'}</span>
+                            </p>
                           </div>
-                          {driver.deactivationDate && (
-                            <div className="flex items-center gap-1 text-[11px] text-rose-800 font-mono font-semibold">
-                              <Calendar className="w-3 h-3 text-rose-600" />
-                              <span>Deactivated: {driver.deactivationDate}</span>
-                            </div>
-                          )}
+                          <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0">
+                            <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+                            <span>{driver.overallComplianceStatus || 'Non-Compliant'}</span>
+                          </span>
                         </div>
+
+                        <div className="pt-2 border-t border-slate-100 space-y-2 text-xs">
+                          <div className="flex items-center justify-between text-slate-700 flex-wrap gap-2">
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-slate-400">Cab No.:</span>
+                              <span className="font-bold text-blue-800 font-mono bg-blue-50 px-2 py-0.5 rounded border border-blue-100">{cabNo}</span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <span className="text-slate-400">City:</span>
+                              <span className="font-bold text-slate-800">{driver.city || 'Bangalore'}</span>
+                            </div>
+                            {driver.deactivationDate && (
+                              <div className="flex items-center gap-1 text-[11px] text-rose-800 font-mono font-semibold">
+                                <Calendar className="w-3 h-3 text-rose-600" />
+                                <span>Deactivated: {driver.deactivationDate}</span>
+                              </div>
+                            )}
+                          </div>
 
                         {/* Inactivity Reason / Comments */}
                         <div className="p-3 bg-rose-50/70 border border-rose-100 rounded-xl space-y-1">
@@ -981,7 +993,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

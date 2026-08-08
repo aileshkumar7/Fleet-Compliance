@@ -10,6 +10,7 @@ import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Cab, Driver, Client } from '../types';
 import { analyzeCabExpiry, analyzeDriverExpiry, getDocumentStatus } from './expiryEngine';
+import { getDriverCabNumber } from './cabDriverUtils';
 
 export interface ReportFilterOptions {
   clientFilter: string; // 'all' or clientId
@@ -157,6 +158,7 @@ export async function exportFleetExcelReport(
     return {
       'Driver ID': driver.driverId || '',
       'Driver Name': driver.name || '',
+      'Assigned Cab No': getDriverCabNumber(driver, cabs),
       'Client ID': driver.clientId || '',
       'Client Name': driver.clientName || '',
       'Status': driver.status || 'active',

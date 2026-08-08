@@ -10,9 +10,10 @@ import { useAuth } from '../context/AuthContext';
 import { Driver, Cab, Client, UploadLog } from '../types';
 import { analyzeDriverExpiry } from '../utils/expiryEngine';
 import { matchesDriverSearch } from '../utils/searchUtils';
+import { getDriverCabNumber } from '../utils/cabDriverUtils';
 import { 
   Users, Search, RefreshCw, ShieldAlert, ShieldCheck, Phone, MapPin, 
-  AlertTriangle, Building2, CheckCircle2, FileText, ArrowRight, Info
+  AlertTriangle, Building2, CheckCircle2, FileText, ArrowRight, Info, Truck
 } from 'lucide-react';
 
 export const DriversList: React.FC = () => {
@@ -310,12 +311,19 @@ export const DriversList: React.FC = () => {
                 {filteredDrivers.map((d) => {
                   const audit = analyzeDriverExpiry(d);
                   const isInactive = (d.status || '').toLowerCase() === 'inactive';
+                  const cabNo = getDriverCabNumber(d, cabs);
                   
                   return (
                     <tr key={d.id} className={`transition-colors ${isInactive ? 'bg-amber-50/30 hover:bg-amber-50/50' : audit.hasAlert ? 'bg-rose-50/30 hover:bg-rose-50/50' : 'hover:bg-slate-50/80'}`}>
                       <td className="px-6 py-4">
                         <div>
-                          <p className="font-bold text-slate-900 text-sm">{d.name || 'N/A'}</p>
+                          <div className="flex items-center gap-2">
+                            <p className="font-bold text-slate-900 text-sm">{d.name || 'N/A'}</p>
+                            <span className="inline-flex items-center gap-1 font-mono text-[10px] font-bold text-blue-800 bg-blue-50 px-1.5 py-0.5 rounded border border-blue-200">
+                              <Truck className="w-3 h-3 text-blue-600" />
+                              <span>{cabNo}</span>
+                            </span>
+                          </div>
                           <div className="flex items-center gap-2 text-slate-500 mt-0.5 font-mono text-[11px]">
                             <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{d.driverId}</span>
                             {d.phoneNumbers && (

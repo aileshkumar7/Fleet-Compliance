@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import { Cab, Driver } from '../types';
 import { getDocumentStatus } from '../utils/expiryEngine';
 import { exportRecordExcelReport } from '../utils/reportGenerator';
+import { getDriverCabNumber } from '../utils/cabDriverUtils';
 import { useAuth } from '../context/AuthContext';
 import { 
   ArrowLeft, 
@@ -410,6 +411,10 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
                 <h2 className="text-2xl font-black tracking-tight">{driver.name || 'N/A'}</h2>
                 <span className="bg-slate-800 text-slate-300 font-mono text-xs px-2.5 py-0.5 rounded-md border border-slate-700">
                   ID: {driver.driverId || 'N/A'}
+                </span>
+                <span className="bg-blue-600/30 text-blue-300 font-mono text-xs px-2.5 py-0.5 rounded-md border border-blue-500/40 font-bold flex items-center gap-1">
+                  <Truck className="w-3.5 h-3.5 text-blue-400" />
+                  <span>Cab: {getDriverCabNumber(driver)}</span>
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-1">

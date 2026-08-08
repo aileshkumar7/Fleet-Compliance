@@ -14,6 +14,7 @@ import {
   EntityExpiryAnalysis 
 } from '../utils/expiryEngine';
 import { matchesCabSearch, matchesDriverSearch } from '../utils/searchUtils';
+import { getDriverCabNumber } from '../utils/cabDriverUtils';
 import { 
   AlertTriangle, 
   Truck, 
@@ -403,45 +404,56 @@ export const ExpiringAlertsView: React.FC = () => {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredDriverAnalyses.map(({ entity: driver, worstStatus, alerts }) => (
-                    <div
-                      key={driver.id}
-                      className={`bg-white rounded-2xl border shadow-sm p-5 space-y-3 relative overflow-hidden transition-all ${
-                        worstStatus === 'expired' 
-                          ? 'border-rose-300 ring-2 ring-rose-500/20' 
-                          : 'border-amber-300 ring-2 ring-amber-500/20'
-                      }`}
-                    >
-                      {/* Top Bar with Pulsing Badge */}
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <h4 className="font-bold text-slate-900 text-base">{driver.name || 'N/A'}</h4>
-                          <div className="flex items-center gap-2 mt-0.5 font-mono text-[11px] text-slate-500">
-                            <span>DL: <strong className="text-slate-800">{driver.driverLicenseNumber || 'N/A'}</strong></span>
+                  {filteredDriverAnalyses.map(({ entity: driver, worstStatus, alerts }) => {
+                    const cabNo = getDriverCabNumber(driver, cabs);
+                    return (
+                      <div
+                        key={driver.id}
+                        className={`bg-white rounded-2xl border shadow-sm p-5 space-y-3 relative overflow-hidden transition-all ${
+                          worstStatus === 'expired' 
+                            ? 'border-rose-300 ring-2 ring-rose-500/20' 
+                            : 'border-amber-300 ring-2 ring-amber-500/20'
+                        }`}
+                      >
+                        {/* Top Bar with Pulsing Badge */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <h4 className="font-bold text-slate-900 text-base">{driver.name || 'N/A'}</h4>
+                            <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5 font-mono text-[11px] text-slate-500">
+                              <span>DL: <strong className="text-slate-800">{driver.driverLicenseNumber || 'N/A'}</strong></span>
+                            </div>
+                          </div>
+
+                          {/* Blinking Red Alert Badge */}
+                          <div className="flex items-center gap-1.5 bg-rose-600 text-white px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider shadow-sm shrink-0">
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-200 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                            </span>
+                            <span>{worstStatus === 'expired' ? 'EXPIRED DOCS' : 'EXPIRING SOON'}</span>
                           </div>
                         </div>
 
-                        {/* Blinking Red Alert Badge */}
-                        <div className="flex items-center gap-1.5 bg-rose-600 text-white px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider shadow-sm shrink-0">
-                          <span className="relative flex h-2 w-2">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-200 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
-                          </span>
-                          <span>{worstStatus === 'expired' ? 'EXPIRED DOCS' : 'EXPIRING SOON'}</span>
+                        {/* Cab No., Client & City */}
+                        <div className="text-xs text-slate-600 space-y-1.5 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                          <div className="flex justify-between items-center bg-blue-50/80 px-2 py-1 rounded-lg border border-blue-100">
+                            <span className="text-blue-900 font-bold flex items-center gap-1.5 text-[11px]">
+                              <Truck className="w-3.5 h-3.5 text-blue-600 shrink-0" />
+                              <span>Cab No.:</span>
+                            </span>
+                            <span className="font-black text-blue-900 font-mono text-xs">
+                              {cabNo}
+                            </span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">Client:</span>
+                            <span className="font-semibold text-slate-800">{driver.clientName || 'N/A'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">City:</span>
+                            <span className="font-semibold text-slate-800">{driver.city || 'Bangalore'}</span>
+                          </div>
                         </div>
-                      </div>
-
-                      {/* Client & City */}
-                      <div className="text-xs text-slate-600 space-y-1 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">Client:</span>
-                          <span className="font-semibold text-slate-800">{driver.clientName || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">City:</span>
-                          <span className="font-semibold text-slate-800">{driver.city || 'Bangalore'}</span>
-                        </div>
-                      </div>
 
                       {/* Specific Triggering Document Alerts List */}
                       <div className="space-y-1.5 pt-1">
@@ -470,7 +482,8 @@ export const ExpiringAlertsView: React.FC = () => {
                         </div>
                       </div>
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>

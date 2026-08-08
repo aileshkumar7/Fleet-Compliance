@@ -278,6 +278,19 @@ const DRIVER_FIELD_MAP: Record<string, keyof Driver> = {
   remarks: 'inactivityReason',
   remark: 'inactivityReason',
   comments: 'comments',
+
+  cabno: 'assignedCab',
+  cabnumber: 'assignedCab',
+  cabsno: 'assignedCab',
+  cab: 'assignedCab',
+  assignedcab: 'assignedCab',
+  assignedvehicle: 'assignedCab',
+  vehicleno: 'assignedCab',
+  vehiclenumber: 'assignedCab',
+  vehicleregistrationnumber: 'assignedCab',
+  regno: 'assignedCab',
+  registrationno: 'assignedCab',
+  registrationnumber: 'assignedCab',
 };
 
 // Maps normalized headers to cab field names

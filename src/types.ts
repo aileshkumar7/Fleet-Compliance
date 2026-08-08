@@ -47,6 +47,8 @@ export interface Driver {
   documentsUploaded: string[];
   status: 'active' | 'inactive' | string;
   clientId: string;
+  assignedCab?: string;
+  vehicleNumber?: string;
   uploadBatchId?: string;
   uploadBatchFileName?: string;
 }
