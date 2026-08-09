@@ -8,7 +8,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Cab, Driver, Client } from '../types';
+import { Cab, Driver, Client, Trip } from '../types';
 import { analyzeCabExpiry, analyzeDriverExpiry, getDocumentStatus } from './expiryEngine';
 import { getDriverCabNumber } from './cabDriverUtils';
 
@@ -23,7 +23,7 @@ export interface ReportFilterOptions {
  */
 export async function logReportDownload(
   downloadedBy: string,
-  reportType: 'excel_full' | 'pdf_single',
+  reportType: 'excel_full' | 'pdf_single' | 'trip_summary' | 'trip_detailed' | string,
   fileName: string,
   filtersUsed: Record<string, any>,
   recordCount: number
@@ -611,4 +611,407 @@ export async function exportRecordPdfReport(
     await logReportDownload(downloadedBy, 'pdf_single', fileName, { type: 'driver', id: driver.driverId }, 1);
     return fileName;
   }
+}
+
+/**
+ * Safely parses Firestore Timestamp, JS Date, or date string into JS Date
+ */
+function parseTripDateHelper(val: any): Date | null {
+  if (!val) return null;
+  if (val?.toDate && typeof val.toDate === 'function') {
+    return val.toDate();
+  }
+  if (val instanceof Date) {
+    return isNaN(val.getTime()) ? null : val;
+  }
+  const d = new Date(val);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+/**
+ * Formats time values for reports
+ */
+function formatTimeStringHelper(val: any): string {
+  if (!val) return '—';
+  if (val?.toDate && typeof val.toDate === 'function') {
+    const d = val.toDate();
+    return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  }
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return '—';
+    return val.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+  }
+  if (typeof val === 'string') {
+    if (!val.trim()) return '—';
+    const d = new Date(val);
+    if (!isNaN(d.getTime()) && val.includes('T')) {
+      return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+    }
+    return val;
+  }
+  return String(val);
+}
+
+/**
+ * Helper to get clean file names for trip reports
+ */
+function getReportFileName(
+  type: 'Summary' | 'Detailed',
+  period: '24h' | '7d' | '1m' | string,
+  targetCabReg?: string | null,
+  specificDate?: string | null
+): string {
+  if (specificDate) {
+    if (targetCabReg) {
+      const cleanCab = targetCabReg.trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
+      return `Trip_${type}_${cleanCab}_${specificDate}.xlsx`;
+    }
+    return `Trip_${type}_${specificDate}.xlsx`;
+  }
+  const periodStr = period === '24h' ? 'Last24Hours' : period === '7d' ? 'Last7Days' : 'Last1Month';
+  const todayStr = new Date().toISOString().split('T')[0];
+  if (targetCabReg) {
+    const cleanCab = targetCabReg.trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
+    return `Trip_${type}_${cleanCab}_${periodStr}_${todayStr}.xlsx`;
+  }
+  return `Trip_${type}_${periodStr}_${todayStr}.xlsx`;
+}
+
+/**
+ * Generates and downloads Excel Summary Report for Trip Analytics
+ */
+export async function exportTripSummaryReport(
+  trips: Trip[],
+  period: '24h' | '7d' | '1m' | string,
+  targetCabReg: string | null,
+  downloadedBy: string,
+  specificDate?: string | null
+): Promise<{ fileName: string; recordCount: number }> {
+  let startDateCutoff: Date;
+  let endDateCutoff: Date;
+
+  if (specificDate) {
+    const parts = specificDate.split('-');
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    startDateCutoff = new Date(y, m, d, 0, 0, 0, 0);
+    endDateCutoff = new Date(y, m, d, 23, 59, 59, 999);
+  } else {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+    const currentDate = now.getDate();
+
+    const todayStart = new Date(currentYear, currentMonth, currentDate, 0, 0, 0, 0);
+    endDateCutoff = new Date(currentYear, currentMonth, currentDate, 23, 59, 59, 999);
+
+    startDateCutoff =
+      period === '24h'
+        ? todayStart
+        : period === '7d'
+        ? new Date(currentYear, currentMonth, currentDate - 6, 0, 0, 0, 0)
+        : new Date(currentYear, currentMonth, currentDate - 29, 0, 0, 0, 0);
+  }
+
+  // Generate array of calendar days for per-day breakdown
+  const dayHeaders: string[] = [];
+  const dayKeys: string[] = [];
+
+  const isSingleDay = Boolean(specificDate) || period === '24h';
+
+  if (!isSingleDay) {
+    const totalDays = period === '7d' ? 7 : 30;
+    for (let i = 0; i < totalDays; i++) {
+      const d = new Date(startDateCutoff.getTime());
+      d.setDate(d.getDate() + i);
+
+      const headerLabel = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' });
+      dayHeaders.push(headerLabel);
+
+      const k = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      dayKeys.push(k);
+    }
+  }
+
+  // Filter & group trips by cab
+  const cabMap: {
+    [reg: string]: {
+      registration: string;
+      vehicleType: string;
+      tripSet: Set<string>;
+      dayTripSets: { [dayKey: string]: Set<string> };
+      latestTripDate: Date | null;
+    };
+  } = {};
+
+  const cleanTarget = targetCabReg ? targetCabReg.trim().toUpperCase() : null;
+
+  trips.forEach((t) => {
+    const reg = (t.registration || '').trim().toUpperCase();
+    if (!reg) return;
+    if (cleanTarget && reg !== cleanTarget) return;
+
+    const tripId = t.tripId || t.id;
+    if (!tripId) return;
+
+    const d = parseTripDateHelper(t.date || t.deploymentTime);
+    if (!d) return;
+
+    if (d.getTime() >= startDateCutoff.getTime() && d.getTime() <= endDateCutoff.getTime()) {
+      if (!cabMap[reg]) {
+        cabMap[reg] = {
+          registration: reg,
+          vehicleType: t.vehicleType || 'Cab',
+          tripSet: new Set<string>(),
+          dayTripSets: {},
+          latestTripDate: null,
+        };
+      }
+
+      cabMap[reg].tripSet.add(tripId);
+
+      const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (!cabMap[reg].dayTripSets[dayKey]) {
+        cabMap[reg].dayTripSets[dayKey] = new Set<string>();
+      }
+      cabMap[reg].dayTripSets[dayKey].add(tripId);
+
+      if (!cabMap[reg].latestTripDate || d.getTime() > cabMap[reg].latestTripDate!.getTime()) {
+        cabMap[reg].latestTripDate = d;
+      }
+    }
+  });
+
+  const headers = isSingleDay
+    ? ['Registration', 'Vehicle Type', 'Total Trips', 'Last Trip Date/Time']
+    : ['Registration', 'Vehicle Type', 'Total Trips', ...dayHeaders, 'Last Trip Date/Time'];
+
+  const cabList = Object.values(cabMap).sort((a, b) => b.tripSet.size - a.tripSet.size);
+
+  let grandTotalTrips = 0;
+  const dayGrandTotals: number[] = new Array(dayKeys.length).fill(0);
+
+  const dataRows = cabList.map((cab) => {
+    grandTotalTrips += cab.tripSet.size;
+
+    const dayCounts = dayKeys.map((dk, idx) => {
+      const count = cab.dayTripSets[dk]?.size || 0;
+      dayGrandTotals[idx] += count;
+      return count;
+    });
+
+    const lastTripFormatted = cab.latestTripDate
+      ? cab.latestTripDate.toLocaleString('en-GB', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+          hour: '2-digit',
+          minute: '2-digit',
+        })
+      : 'N/A';
+
+    if (isSingleDay) {
+      return [cab.registration, cab.vehicleType, cab.tripSet.size, lastTripFormatted];
+    } else {
+      return [cab.registration, cab.vehicleType, cab.tripSet.size, ...dayCounts, lastTripFormatted];
+    }
+  });
+
+  // Totals Row summing all trips across all cabs
+  const totalsRow = isSingleDay
+    ? ['TOTAL', '', grandTotalTrips, '']
+    : ['TOTAL', '', grandTotalTrips, ...dayGrandTotals, ''];
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows, totalsRow]);
+
+  const max_widths = headers.map((h, i) => {
+    let max = String(h).length;
+    [...dataRows, totalsRow].forEach((row) => {
+      const val = row[i] !== undefined ? String(row[i]) : '';
+      if (val.length > max) max = val.length;
+    });
+    return { wch: Math.max(max + 3, 12) };
+  });
+  ws['!cols'] = max_widths;
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Trip Summary');
+
+  const fileName = getReportFileName('Summary', period, cleanTarget, specificDate);
+  XLSX.writeFile(wb, fileName);
+
+  await logReportDownload(
+    downloadedBy,
+    'trip_summary',
+    fileName,
+    {
+      period: specificDate ? `Specific Date: ${specificDate}` : period,
+      cabFilter: cleanTarget || 'All Cabs',
+      totalCabs: cabList.length,
+      grandTotalTrips,
+      specificDate: specificDate || null,
+    },
+    cabList.length
+  );
+
+  return { fileName, recordCount: cabList.length };
+}
+
+/**
+ * Generates and downloads Excel Detailed Report for Trip Analytics
+ */
+export async function exportTripDetailedReport(
+  trips: Trip[],
+  period: '24h' | '7d' | '1m' | string,
+  targetCabReg: string | null,
+  downloadedBy: string,
+  specificDate?: string | null
+): Promise<{ fileName: string; recordCount: number }> {
+  let startDateCutoff: Date;
+  let endDateCutoff: Date;
+
+  if (specificDate) {
+    const parts = specificDate.split('-');
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    startDateCutoff = new Date(y, m, d, 0, 0, 0, 0);
+    endDateCutoff = new Date(y, m, d, 23, 59, 59, 999);
+  } else {
+    const now = new Date();
+    const currentYear = now.getFullYear();
+    const currentMonth = now.getMonth();
+    const currentDate = now.getDate();
+
+    const todayStart = new Date(currentYear, currentMonth, currentDate, 0, 0, 0, 0);
+    endDateCutoff = new Date(currentYear, currentMonth, currentDate, 23, 59, 59, 999);
+
+    startDateCutoff =
+      period === '24h'
+        ? todayStart
+        : period === '7d'
+        ? new Date(currentYear, currentMonth, currentDate - 6, 0, 0, 0, 0)
+        : new Date(currentYear, currentMonth, currentDate - 29, 0, 0, 0, 0);
+  }
+
+  const cleanTarget = targetCabReg ? targetCabReg.trim().toUpperCase() : null;
+
+  // De-duplicate trips by Trip ID
+  const matchedSet = new Set<string>();
+  const detailedTrips: Trip[] = [];
+
+  trips.forEach((t) => {
+    const tripId = t.tripId || t.id;
+    if (!tripId || matchedSet.has(tripId)) return;
+
+    const reg = (t.registration || '').trim().toUpperCase();
+    if (cleanTarget && reg !== cleanTarget) return;
+
+    const d = parseTripDateHelper(t.date || t.deploymentTime);
+    if (!d) return;
+
+    if (d.getTime() >= startDateCutoff.getTime() && d.getTime() <= endDateCutoff.getTime()) {
+      matchedSet.add(tripId);
+      detailedTrips.push(t);
+    }
+  });
+
+  // Sort by Date (ascending), then Registration (alphabetical)
+  detailedTrips.sort((a, b) => {
+    const da = parseTripDateHelper(a.date || a.deploymentTime)?.getTime() || 0;
+    const dbTime = parseTripDateHelper(b.date || b.deploymentTime)?.getTime() || 0;
+    if (da !== dbTime) return da - dbTime;
+    return (a.registration || '').localeCompare(b.registration || '');
+  });
+
+  const headers = [
+    'Trip ID',
+    'Date',
+    'Registration',
+    'Vehicle Type',
+    'Direction',
+    'Trip Type',
+    'Actual Pickup Time',
+    'Actual Drop Time',
+    'Passenger Count',
+    'Driver Name',
+    'Driver Contact No',
+  ];
+
+  let totalPax = 0;
+  const dataRows = detailedTrips.map((t) => {
+    const d = parseTripDateHelper(t.date || t.deploymentTime);
+    const dateStr = d
+      ? d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })
+      : 'N/A';
+
+    const pax = t.passengerCount || 1;
+    totalPax += pax;
+
+    const pickupTime = formatTimeStringHelper(t.actualPickupTime || t.deploymentTime || t.date);
+    const dropTime = formatTimeStringHelper(t.actualDropTime);
+
+    return [
+      t.tripId || t.id || 'N/A',
+      dateStr,
+      t.registration || 'N/A',
+      t.vehicleType || 'Cab',
+      t.direction || 'N/A',
+      t.tripType || 'Standard',
+      pickupTime,
+      dropTime,
+      pax,
+      t.driverName || 'N/A',
+      t.driverContactNo || 'N/A',
+    ];
+  });
+
+  const totalsRow = [
+    'TOTAL TRIPS: ' + detailedTrips.length,
+    '',
+    '',
+    '',
+    '',
+    '',
+    '',
+    'TOTAL PAX:',
+    totalPax,
+    '',
+    '',
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows, totalsRow]);
+
+  const max_widths = headers.map((h, i) => {
+    let max = String(h).length;
+    [...dataRows, totalsRow].forEach((row) => {
+      const val = row[i] !== undefined ? String(row[i]) : '';
+      if (val.length > max) max = val.length;
+    });
+    return { wch: Math.max(max + 3, 10) };
+  });
+  ws['!cols'] = max_widths;
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Trip Detailed');
+
+  const fileName = getReportFileName('Detailed', period, cleanTarget, specificDate);
+  XLSX.writeFile(wb, fileName);
+
+  await logReportDownload(
+    downloadedBy,
+    'trip_detailed',
+    fileName,
+    {
+      period: specificDate ? `Specific Date: ${specificDate}` : period,
+      cabFilter: cleanTarget || 'All Cabs',
+      recordCount: detailedTrips.length,
+      totalPassengers: totalPax,
+      specificDate: specificDate || null,
+    },
+    detailedTrips.length
+  );
+
+  return { fileName, recordCount: detailedTrips.length };
 }

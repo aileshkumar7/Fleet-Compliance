@@ -21,6 +21,8 @@ import { LoginView } from './components/LoginView';
 import { ManageUsers } from './components/ManageUsers';
 import { MyAccessPanel } from './components/MyAccessPanel';
 import { DataUploader } from './components/DataUploader';
+import { TripDataUploader } from './components/TripDataUploader';
+import { TripAnalyticsView } from './components/TripAnalyticsView';
 import { UploadLogsList } from './components/UploadLogsList';
 import { ReportLogsView } from './components/ReportLogsView';
 import { UserActivityLogsView } from './components/UserActivityLogsView';
@@ -37,7 +39,7 @@ import { analyzeCabExpiry, analyzeDriverExpiry } from './utils/expiryEngine';
 export default function App() {
   const { user, userProfile, isAdmin, logout, canAccess, loading } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'alerts' | 'uploader' | 'drivers' | 'cabs' | 'clients' | 'logs' | 'reportLogs' | 'users' | 'userLogs'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'alerts' | 'uploader' | 'tripUploader' | 'tripAnalytics' | 'drivers' | 'cabs' | 'clients' | 'logs' | 'reportLogs' | 'users' | 'userLogs'>('dashboard');
   const [alertCount, setAlertCount] = useState<number>(0);
   const [isMyAccessOpen, setIsMyAccessOpen] = useState<boolean>(false);
 
@@ -203,6 +205,30 @@ export default function App() {
               </button>
             )}
 
+            {/* Trip Data Uploader */}
+            {canAccess('uploadDataSheets') && (
+              <button
+                onClick={() => setActiveTab('tripUploader')}
+                className={`w-full text-left rounded-xl px-4 py-2.5 flex items-center gap-3 transition-colors cursor-pointer ${
+                  activeTab === 'tripUploader' ? 'bg-blue-600 text-white shadow-xs font-semibold' : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
+                }`}
+              >
+                <Truck className="w-4 h-4 text-blue-400" />
+                <span>Upload Trip Data</span>
+              </button>
+            )}
+
+            {/* Trip Analytics */}
+            <button
+              onClick={() => setActiveTab('tripAnalytics')}
+              className={`w-full text-left rounded-xl px-4 py-2.5 flex items-center gap-3 transition-colors cursor-pointer ${
+                activeTab === 'tripAnalytics' ? 'bg-blue-600 text-white shadow-xs font-semibold' : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
+              }`}
+            >
+              <Activity className="w-4 h-4 text-emerald-400" />
+              <span>Trip Analytics</span>
+            </button>
+
             {/* Upload Logs */}
             {canAccess('uploadDataSheets') && (
               <button
@@ -306,6 +332,8 @@ export default function App() {
               <h1 className="text-lg lg:text-xl font-bold text-slate-800 tracking-tight">Fleet Compliance Manager</h1>
               <p className="text-xs text-slate-500">
                 {activeTab === 'uploader' && 'Upload Data Sheet & Snapshot Archive'}
+                {activeTab === 'tripUploader' && 'Upload BA Trip Reports & Deduplicated Trips Sync'}
+                {activeTab === 'tripAnalytics' && 'Daily Trip Volume Analytics & Trends'}
                 {activeTab === 'dashboard' && 'Fleet Overview & Live Document Audit'}
                 {activeTab === 'alerts' && 'Document Expiry Alerts & Audit Control'}
                 {activeTab === 'drivers' && 'Driver Verification & Compliance Registry'}
@@ -390,6 +418,14 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'tripUploader' && canAccess('uploadDataSheets') && (
+            <TripDataUploader />
+          )}
+
+          {activeTab === 'tripAnalytics' && (
+            <TripAnalyticsView />
+          )}
+
           {activeTab === 'logs' && canAccess('uploadDataSheets') && (
             <UploadLogsList />
           )}
@@ -411,6 +447,7 @@ export default function App() {
             (activeTab === 'drivers' && !canAccess('viewDrivers')) ||
             (activeTab === 'cabs' && !canAccess('viewCabs')) ||
             (activeTab === 'uploader' && !canAccess('uploadDataSheets')) ||
+            (activeTab === 'tripUploader' && !canAccess('uploadDataSheets')) ||
             (activeTab === 'logs' && !canAccess('uploadDataSheets')) ||
             (activeTab === 'users' && !isAdmin) ||
             (activeTab === 'userLogs' && !isAdmin)) && (

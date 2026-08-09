@@ -161,3 +161,26 @@ export interface UserActivityLog {
   sessionId: string;
 }
 
+export interface Trip {
+  id?: string; // Document ID = tripId
+  tripId: string;
+  date: Date | any; // Firestore Timestamp / Date
+  registration: string;
+  vehicleId: string;
+  vehicleType: string;
+  direction: string;
+  tripType: string;
+  deploymentTime: Date | any;
+  actualPickupTime: Date | any;
+  actualDropTime: Date | any;
+  passengerCount: number;
+  driverName: string;
+  driverContactNo: string;
+  facility: string;
+  office: string;
+  costCenter: string;
+  clientId: string;
+  uploadedAt: Date | any;
+}
+
+

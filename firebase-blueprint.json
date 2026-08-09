@@ -127,6 +127,57 @@
         "createdAt": { "type": "string" },
         "createdBy": { "type": "string" }
       }
+    },
+    "trips": {
+      "title": "Trips",
+      "description": "Vehicle trip logs identified by unique Trip ID document key",
+      "properties": {
+        "tripId": { "type": "string" },
+        "date": { "type": "string", "format": "date-time" },
+        "registration": { "type": "string" },
+        "vehicleId": { "type": "string" },
+        "vehicleType": { "type": "string" },
+        "direction": { "type": "string" },
+        "tripType": { "type": "string" },
+        "deploymentTime": { "type": "string" },
+        "actualPickupTime": { "type": "string" },
+        "actualDropTime": { "type": "string" },
+        "passengerCount": { "type": "number" },
+        "driverName": { "type": "string" },
+        "driverContactNo": { "type": "string" },
+        "facility": { "type": "string" },
+        "office": { "type": "string" },
+        "costCenter": { "type": "string" },
+        "clientId": { "type": "string" },
+        "uploadedAt": { "type": "string", "format": "date-time" }
+      },
+      "required": ["tripId"]
+    }
+  },
+  "firestore": {
+    "/drivers/{driverId}": {
+      "schema": { "$ref": "#/entities/drivers" },
+      "description": "Driver compliance collection"
+    },
+    "/cabs/{cabId}": {
+      "schema": { "$ref": "#/entities/cabs" },
+      "description": "Vehicle compliance collection"
+    },
+    "/clients/{clientId}": {
+      "schema": { "$ref": "#/entities/clients" },
+      "description": "Client entities collection"
+    },
+    "/uploadLogs/{logId}": {
+      "schema": { "$ref": "#/entities/uploadLogs" },
+      "description": "Upload activity log collection"
+    },
+    "/users/{userId}": {
+      "schema": { "$ref": "#/entities/users" },
+      "description": "User profiles collection"
+    },
+    "/trips/{tripId}": {
+      "schema": { "$ref": "#/entities/trips" },
+      "description": "Vehicle trips collection keyed by unique Trip ID"
     }
   }
 }
