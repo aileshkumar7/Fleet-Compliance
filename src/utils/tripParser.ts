@@ -4,9 +4,9 @@
  */
 
 import * as XLSX from 'xlsx';
-import { doc, getDoc, setDoc, writeBatch } from 'firebase/firestore';
+import { doc, getDoc, setDoc, writeBatch, collection, addDoc, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Trip } from '../types';
+import { Trip, UploadChangeRecord } from '../types';
 
 export interface TripUploadSummary {
   fileName: string;
@@ -33,9 +33,14 @@ const TRIP_HEADER_MAP: Record<string, keyof Trip | 'employeeCount'> = {
   // Date
   date: 'date',
   tripdate: 'date',
-  bookingdate: 'date',
   shiftdate: 'date',
   startdate: 'date',
+  deploymentdate: 'date',
+  dateofdeployment: 'date',
+  servicedate: 'date',
+  logindate: 'date',
+  pickupdate: 'date',
+  scheduleddate: 'date',
 
   // Registration / Cab No
   registration: 'registration',
@@ -154,23 +159,65 @@ function normalizeHeader(header: string): string {
  */
 export function parseExcelDate(val: any): Date | null {
   if (!val && val !== 0) return null;
-  if (val instanceof Date && !isNaN(val.getTime())) return val;
+
+  if (val instanceof Date) {
+    if (isNaN(val.getTime())) return null;
+    // SheetJS cellDates creates UTC Date objects.
+    // Convert UTC components into local Date so local .getFullYear(), .getMonth(), .getDate() match the calendar date
+    return new Date(
+      val.getUTCFullYear(),
+      val.getUTCMonth(),
+      val.getUTCDate(),
+      val.getUTCHours(),
+      val.getUTCMinutes(),
+      val.getUTCSeconds()
+    );
+  }
 
   // Excel serial number (e.g. 45123 or 45123.60416)
   if (typeof val === 'number') {
     if (val <= 0) return null;
-    // Excel epoch Dec 30, 1899
-    const ms = Math.round((val - 25569) * 86400 * 1000);
-    const date = new Date(ms);
-    return isNaN(date.getTime()) ? null : date;
+    const parsed = XLSX.SSF.parse_date_code(val);
+    if (parsed) {
+      return new Date(
+        parsed.y,
+        parsed.m - 1,
+        parsed.d,
+        parsed.H || 0,
+        parsed.M || 0,
+        Math.floor(parsed.S || 0)
+      );
+    }
   }
 
   if (typeof val === 'string') {
     const trimmed = val.trim();
     if (!trimmed) return null;
 
-    // DD/MM/YYYY or DD-MM-YYYY format
-    const ddmmyyyy = trimmed.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    // DD-MMM-YYYY, DD MMM YYYY, DD/MMM/YYYY, e.g. "09-Aug-2026", "9 Aug 2026", "09/Aug/2026"
+    const MONTH_MAP: Record<string, number> = {
+      jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3,
+      may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8,
+      oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
+    };
+
+    const ddMmmYyyy = trimmed.match(/^(\d{1,2})[\/\-\.\s]+([A-Za-z]{3,9})[\/\-\.\s]+(\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (ddMmmYyyy) {
+      const day = parseInt(ddMmmYyyy[1], 10);
+      const mStr = ddMmmYyyy[2].toLowerCase();
+      const yrRaw = parseInt(ddMmmYyyy[3], 10);
+      const year = yrRaw < 100 ? 2000 + yrRaw : yrRaw;
+      const month = MONTH_MAP[mStr];
+      if (month !== undefined) {
+        const hrs = ddMmmYyyy[4] ? parseInt(ddMmmYyyy[4], 10) : 0;
+        const mins = ddMmmYyyy[5] ? parseInt(ddMmmYyyy[5], 10) : 0;
+        const secs = ddMmmYyyy[6] ? parseInt(ddMmmYyyy[6], 10) : 0;
+        return new Date(year, month, day, hrs, mins, secs);
+      }
+    }
+
+    // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+    const ddmmyyyy = trimmed.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
     if (ddmmyyyy) {
       const day = parseInt(ddmmyyyy[1], 10);
       const month = parseInt(ddmmyyyy[2], 10) - 1;
@@ -182,8 +229,26 @@ export function parseExcelDate(val: any): Date | null {
       if (!isNaN(parsed.getTime())) return parsed;
     }
 
+    // YYYY-MM-DD or YYYY/MM/DD
+    const yyyymmdd = trimmed.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:\s+|T)?(\d{1,2})?:?(\d{2})?:?(\d{2})?/);
+    if (yyyymmdd) {
+      const year = parseInt(yyyymmdd[1], 10);
+      const month = parseInt(yyyymmdd[2], 10) - 1;
+      const day = parseInt(yyyymmdd[3], 10);
+      const hrs = yyyymmdd[4] ? parseInt(yyyymmdd[4], 10) : 0;
+      const mins = yyyymmdd[5] ? parseInt(yyyymmdd[5], 10) : 0;
+      const secs = yyyymmdd[6] ? parseInt(yyyymmdd[6], 10) : 0;
+      const parsed = new Date(year, month, day, hrs, mins, secs);
+      if (!isNaN(parsed.getTime())) return parsed;
+    }
+
     const parsed = new Date(trimmed);
-    return isNaN(parsed.getTime()) ? null : parsed;
+    if (!isNaN(parsed.getTime())) {
+      if (parsed.getUTCHours() === 0 && parsed.getUTCMinutes() === 0 && parsed.getUTCSeconds() === 0) {
+        return new Date(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate(), 0, 0, 0, 0);
+      }
+      return parsed;
+    }
   }
 
   return null;
@@ -247,8 +312,27 @@ export function combineDateAndTime(baseDate: Date | null, timeVal: any): Date | 
 export async function parseAndUploadTripData(
   fileBuffer: ArrayBuffer,
   fileName: string,
-  onProgress?: (processed: number, total: number, message: string) => void
+  onProgress?: (processed: number, total: number, message: string) => void,
+  uploadedBy?: string,
+  clearExistingFirst?: boolean
 ): Promise<TripUploadSummary> {
+  const uploadBatchId = `BATCH-TRIP-${Date.now()}`;
+  const uploadTimestamp = new Date().toISOString();
+
+  // If clearExistingFirst is true, delete existing trips first
+  if (clearExistingFirst) {
+    if (onProgress) {
+      onProgress(0, 0, 'Clearing previous trip dataset from database...');
+    }
+    const snap = await getDocs(collection(db, 'trips'));
+    const docs = snap.docs;
+    for (let i = 0; i < docs.length; i += 400) {
+      const batch = writeBatch(db);
+      docs.slice(i, i + 400).forEach((d) => batch.delete(d.ref));
+      await batch.commit();
+    }
+  }
+
   // 1. Read workbook
   const workbook = XLSX.read(fileBuffer, { type: 'array', cellDates: true });
   const sheetName = workbook.SheetNames[0];
@@ -318,12 +402,13 @@ export async function parseAndUploadTripData(
   const totalUniqueTrips = uniqueTripIds.length;
 
   if (onProgress) {
-    onProgress(0, totalUniqueTrips, `Identified ${totalUniqueTrips} unique trips from ${totalRawRowsRead} raw passenger rows. Checking existing records...`);
+    onProgress(0, totalUniqueTrips, `Identified ${totalUniqueTrips} unique trips from ${totalRawRowsRead} raw passenger rows. Writing database records...`);
   }
 
   // 2. Check existing trip records in Firestore to compute newly added vs. updated
   let newlyAddedCount = 0;
   let updatedCount = 0;
+  const uploadChanges: UploadChangeRecord[] = [];
 
   // Process trips and construct payloads
   const processedTripsToSave: { tripId: string; data: Trip }[] = [];
@@ -342,6 +427,19 @@ export async function parseAndUploadTripData(
       }
     });
 
+    // Fallback search for date if mappedValues.date was not mapped
+    if (!mappedValues.date) {
+      for (const [colName, value] of Object.entries(firstRow)) {
+        const norm = normalizeHeader(colName);
+        if (norm.includes('date') || norm.includes('shift') || norm.includes('day')) {
+          if (value !== undefined && value !== null && String(value).trim() !== '') {
+            mappedValues.date = value;
+            break;
+          }
+        }
+      }
+    }
+
     // Determine passenger count
     let passengerCount = rows.length;
     if (passengerCount === 1 && mappedValues.employeeCount) {
@@ -352,10 +450,16 @@ export async function parseAndUploadTripData(
     }
 
     // Parse Dates
-    const rawDate = parseExcelDate(mappedValues.date);
+    let rawDate = parseExcelDate(mappedValues.date);
     const deploymentTime = combineDateAndTime(rawDate, mappedValues.deploymentTime);
     const actualPickupTime = combineDateAndTime(rawDate, mappedValues.actualPickupTime);
     const actualDropTime = combineDateAndTime(rawDate, mappedValues.actualDropTime);
+
+    // Synchronize rawDate with deploymentTime or actualPickupTime if they contain full date
+    const primaryTimeDate = deploymentTime || actualPickupTime || actualDropTime;
+    if (primaryTimeDate && !isNaN(primaryTimeDate.getTime())) {
+      rawDate = primaryTimeDate;
+    }
 
     const tripData: Trip = {
       tripId,
@@ -376,12 +480,22 @@ export async function parseAndUploadTripData(
       costCenter: String(mappedValues.costCenter || '').trim(),
       clientId: String(mappedValues.clientId || '').trim(),
       uploadedAt: new Date(),
+      uploadBatchId,
+      uploadBatchFileName: fileName,
     };
 
     processedTripsToSave.push({ tripId, data: tripData });
   }
 
-  // 3. Check existing existence and batch write to Firestore
+  // 3. Pre-fetch existing trip doc IDs in a single query to avoid slow sequential getDoc calls
+  const existingDocIdsSet = new Set<string>();
+  try {
+    const existingSnap = await getDocs(collection(db, 'trips'));
+    existingSnap.forEach((d) => existingDocIdsSet.add(d.id));
+  } catch (err) {
+    console.warn('Could not pre-fetch existing trip IDs:', err);
+  }
+
   const BATCH_SIZE = 400; // Safe size below Firestore's 500 limit
   let processedCount = 0;
 
@@ -389,14 +503,26 @@ export async function parseAndUploadTripData(
     const chunk = processedTripsToSave.slice(i, i + BATCH_SIZE);
     const batch = writeBatch(db);
 
-    // Check existence for chunk items
     for (const item of chunk) {
       const tripRef = doc(db, 'trips', item.tripId);
-      const snap = await getDoc(tripRef);
-      if (snap.exists()) {
+      if (existingDocIdsSet.has(item.tripId)) {
         updatedCount++;
+        uploadChanges.push({
+          recordId: item.tripId,
+          identifier: `Trip #${item.tripId} (${item.data.registration || 'N/A'})`,
+          type: 'trip',
+          changeType: 'updated',
+          details: `Trip details updated (Cab: ${item.data.registration || 'N/A'}, Driver: ${item.data.driverName || 'N/A'})`
+        });
       } else {
         newlyAddedCount++;
+        uploadChanges.push({
+          recordId: item.tripId,
+          identifier: `Trip #${item.tripId} (${item.data.registration || 'N/A'})`,
+          type: 'trip',
+          changeType: 'added',
+          details: `New trip record uploaded (Cab: ${item.data.registration || 'N/A'}, Pax: ${item.data.passengerCount})`
+        });
       }
 
       // Convert JS Date objects for Firestore setDoc
@@ -415,9 +541,34 @@ export async function parseAndUploadTripData(
       onProgress(
         processedCount,
         totalUniqueTrips,
-        `Saved ${processedCount} of ${totalUniqueTrips} trips to Firestore database...`
+        `Saved ${processedCount} of ${totalUniqueTrips} trips to database...`
       );
     }
+  }
+
+  // 4. Record audit log entry in uploadLogs collection
+  try {
+    await addDoc(collection(db, 'uploadLogs'), {
+      batchId: uploadBatchId,
+      fileName,
+      uploadType: 'trips',
+      uploadedBy: uploadedBy || 'Fleet Admin',
+      uploadedAt: uploadTimestamp,
+      recordCounts: totalUniqueTrips,
+      details: {
+        driversAdded: 0,
+        driversUpdated: 0,
+        cabsAdded: 0,
+        cabsUpdated: 0,
+        tripsAdded: newlyAddedCount,
+        tripsUpdated: updatedCount,
+        failedRowsCount: 0,
+        totalRowsRead: totalRawRowsRead,
+      },
+      changes: uploadChanges,
+    });
+  } catch (logErr) {
+    console.error('Failed to write upload log for trips:', logErr);
   }
 
   return {

@@ -423,7 +423,7 @@ export default function App() {
           )}
 
           {activeTab === 'tripAnalytics' && (
-            <TripAnalyticsView />
+            <TripAnalyticsView onNavigateToTripUpload={() => setActiveTab('tripUploader')} />
           )}
 
           {activeTab === 'logs' && canAccess('uploadDataSheets') && (

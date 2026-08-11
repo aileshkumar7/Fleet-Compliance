@@ -106,7 +106,7 @@ export interface Client {
 export interface UploadChangeRecord {
   recordId?: string;
   identifier: string;
-  type: 'driver' | 'cab';
+  type: 'driver' | 'cab' | 'trip' | string;
   changeType: 'added' | 'updated' | 'status_changed';
   oldStatus?: string;
   newStatus?: string;
@@ -117,15 +117,19 @@ export interface UploadLog {
   id: string;
   batchId?: string;
   fileName: string;
+  uploadType?: 'drivers' | 'cabs' | 'all' | 'trips' | string;
   uploadedBy: string;
   uploadedAt: string;
   recordCounts: number;
   details?: {
-    driversAdded: number;
-    driversUpdated: number;
-    cabsAdded: number;
-    cabsUpdated: number;
-    failedRowsCount: number;
+    driversAdded?: number;
+    driversUpdated?: number;
+    cabsAdded?: number;
+    cabsUpdated?: number;
+    tripsAdded?: number;
+    tripsUpdated?: number;
+    failedRowsCount?: number;
+    totalRowsRead?: number;
   };
   changes?: UploadChangeRecord[];
 }
@@ -181,6 +185,8 @@ export interface Trip {
   costCenter: string;
   clientId: string;
   uploadedAt: Date | any;
+  uploadBatchId?: string;
+  uploadBatchFileName?: string;
 }
 
 

@@ -20,20 +20,29 @@ import {
   Database,
   FileCheck,
   Building2,
-  ListFilter
+  ListFilter,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 import { parseAndUploadTripData, TripUploadSummary } from '../utils/tripParser';
-import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
+import { collection, onSnapshot, query, orderBy, limit, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Trip } from '../types';
+import { useAuth } from '../context/AuthContext';
 
 export const TripDataUploader: React.FC = () => {
+  const { userProfile } = useAuth();
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [isUploading, setIsUploading] = useState<boolean>(false);
   const [progressStatus, setProgressStatus] = useState<string>('');
   const [progressPercent, setProgressPercent] = useState<number>(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSummary, setUploadSummary] = useState<TripUploadSummary | null>(null);
+  
+  // Options
+  const [clearExistingFirst, setClearExistingFirst] = useState<boolean>(false);
+  const [showWipeTripsModal, setShowWipeTripsModal] = useState<boolean>(false);
+  const [isWiping, setIsWiping] = useState<boolean>(false);
 
   // Recent Trips Preview
   const [recentTrips, setRecentTrips] = useState<Trip[]>([]);
@@ -59,6 +68,25 @@ export const TripDataUploader: React.FC = () => {
     return () => unsubscribe();
   }, []);
 
+  const handleWipeAllTrips = async () => {
+    setIsWiping(true);
+    try {
+      const snap = await getDocs(collection(db, 'trips'));
+      const docs = snap.docs;
+      for (let i = 0; i < docs.length; i += 400) {
+        const batch = writeBatch(db);
+        docs.slice(i, i + 400).forEach((d) => batch.delete(d.ref));
+        await batch.commit();
+      }
+      setShowWipeTripsModal(false);
+    } catch (err: any) {
+      console.error('Failed to wipe trip data:', err);
+      setUploadError(`Failed to clear trip data: ${err.message || err}`);
+    } finally {
+      setIsWiping(false);
+    }
+  };
+
   const handleFileProcess = async (file: File) => {
     if (!file.name.match(/\.(xlsx|xls)$/i)) {
       setUploadError('Please select a valid Excel spreadsheet file (.xlsx or .xls).');
@@ -73,7 +101,8 @@ export const TripDataUploader: React.FC = () => {
 
     try {
       const buffer = await file.arrayBuffer();
-      
+      const uploaderName = userProfile?.name || userProfile?.email || 'Fleet Admin';
+
       const summary = await parseAndUploadTripData(
         buffer,
         file.name,
@@ -83,7 +112,9 @@ export const TripDataUploader: React.FC = () => {
             const pct = Math.min(95, Math.round((processed / total) * 85) + 10);
             setProgressPercent(pct);
           }
-        }
+        },
+        uploaderName,
+        clearExistingFirst
       );
 
       setProgressPercent(100);
@@ -114,8 +145,11 @@ export const TripDataUploader: React.FC = () => {
   const formatDateValue = (val: any): string => {
     if (!val) return 'N/A';
     try {
-      const d = val?.toDate ? val.toDate() : new Date(val);
+      let d = val?.toDate ? val.toDate() : new Date(val);
       if (isNaN(d.getTime())) return 'N/A';
+      if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0) {
+        d = new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0);
+      }
       return d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     } catch {
       return 'N/A';
@@ -151,12 +185,38 @@ export const TripDataUploader: React.FC = () => {
           </div>
         </div>
 
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2.5">
+          <button
+            type="button"
+            onClick={() => setShowWipeTripsModal(true)}
+            className="inline-flex items-center gap-1.5 bg-red-50 hover:bg-red-100 text-red-700 border border-red-200 font-bold text-xs px-3.5 py-1.5 rounded-xl transition-colors cursor-pointer shadow-2xs"
+            title="Delete all trip data records from database"
+          >
+            <Trash2 className="w-4 h-4 text-red-600" />
+            <span>Wipe Existing Trip Data</span>
+          </button>
+
           <span className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-800 border border-blue-200 px-3 py-1.5 rounded-full text-xs font-bold font-mono">
             <Database className="w-3.5 h-3.5 text-blue-600" />
             <span>Target: `trips` collection</span>
           </span>
         </div>
+      </div>
+
+      {/* Upload Settings / Pre-Clear Toggle */}
+      <div className="bg-amber-50/70 border border-amber-200 rounded-2xl p-4 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs">
+        <label className="flex items-center gap-2.5 font-bold text-amber-950 cursor-pointer">
+          <input
+            type="checkbox"
+            checked={clearExistingFirst}
+            onChange={(e) => setClearExistingFirst(e.target.checked)}
+            className="w-4 h-4 text-amber-600 rounded border-amber-300 focus:ring-amber-500 cursor-pointer"
+          />
+          <span>Automatically delete previous Trip Data records when uploading this new sheet</span>
+        </label>
+        <span className="text-[11px] text-amber-800/80">
+          {clearExistingFirst ? '⚠️ Existing trips will be cleared before parsing' : 'Default: Overwrites/merges by Trip ID'}
+        </span>
       </div>
 
       {/* Upload Dropzone Container */}
@@ -385,6 +445,45 @@ export const TripDataUploader: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Wipe All Trip Data Confirmation Modal */}
+      {showWipeTripsModal && (
+        <div className="fixed inset-0 bg-slate-900/50 backdrop-blur-xs z-50 flex items-center justify-center p-4">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-xl space-y-5 border border-slate-100 animate-in fade-in zoom-in-95 duration-150">
+            <div className="flex items-center gap-3 text-red-600">
+              <div className="p-3 bg-red-100 rounded-xl">
+                <AlertTriangle className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 text-lg">Clear All BA Trip Data</h3>
+                <p className="text-xs text-slate-500">Delete all records in `trips` collection</p>
+              </div>
+            </div>
+
+            <p className="text-xs text-slate-600 leading-relaxed">
+              Are you sure you want to delete <span className="font-bold text-slate-900">ALL trip records</span> from the database? This action is permanent and cannot be undone. Trip Analytics will show zero trips until you upload a new Trip Data Excel sheet.
+            </p>
+
+            <div className="pt-2 flex items-center justify-end gap-3">
+              <button
+                onClick={() => setShowWipeTripsModal(false)}
+                disabled={isWiping}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleWipeAllTrips}
+                disabled={isWiping}
+                className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-2xs transition-colors cursor-pointer"
+              >
+                {isWiping ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
+                <span>Delete All Trip Records</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

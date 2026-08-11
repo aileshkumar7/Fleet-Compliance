@@ -30,7 +30,8 @@ import {
   ChevronDown,
   FileSpreadsheet,
   FileText,
-  AlertTriangle
+  AlertTriangle,
+  Truck
 } from 'lucide-react';
 import { 
   ResponsiveContainer, 
@@ -50,6 +51,7 @@ import { db } from '../lib/firebase';
 import { Trip, Cab, Client } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { exportTripSummaryReport, exportTripDetailedReport } from '../utils/reportGenerator';
+import { normalizeRegistration } from '../utils/registrationUtils';
 
 export type PeriodType = '24h' | '7d' | '1m';
 
@@ -58,14 +60,70 @@ export type PeriodType = '24h' | '7d' | '1m';
  */
 function parseTripDate(val: any): Date | null {
   if (!val) return null;
+  let d: Date | null = null;
   if (val?.toDate && typeof val.toDate === 'function') {
-    return val.toDate();
+    d = val.toDate();
+  } else if (val instanceof Date) {
+    d = val;
+  } else if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (!trimmed) return null;
+    // Match DD-MMM-YYYY, DD MMM YYYY, DD/MMM/YYYY e.g. "09-Aug-2026", "9 Aug 2026"
+    const MONTH_MAP: Record<string, number> = {
+      jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3,
+      may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8,
+      oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
+    };
+    const ddMmmYyyy = trimmed.match(/^(\d{1,2})[\/\-\.\s]+([A-Za-z]{3,9})[\/\-\.\s]+(\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (ddMmmYyyy) {
+      const day = parseInt(ddMmmYyyy[1], 10);
+      const mStr = ddMmmYyyy[2].toLowerCase();
+      const yrRaw = parseInt(ddMmmYyyy[3], 10);
+      const year = yrRaw < 100 ? 2000 + yrRaw : yrRaw;
+      const month = MONTH_MAP[mStr];
+      if (month !== undefined) {
+        const hrs = ddMmmYyyy[4] ? parseInt(ddMmmYyyy[4], 10) : 0;
+        const mins = ddMmmYyyy[5] ? parseInt(ddMmmYyyy[5], 10) : 0;
+        const secs = ddMmmYyyy[6] ? parseInt(ddMmmYyyy[6], 10) : 0;
+        return new Date(year, month, day, hrs, mins, secs);
+      }
+    }
+    // Match DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
+    const ddmmyyyy = trimmed.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (ddmmyyyy) {
+      const day = parseInt(ddmmyyyy[1], 10);
+      const month = parseInt(ddmmyyyy[2], 10) - 1;
+      const year = parseInt(ddmmyyyy[3], 10);
+      const hrs = ddmmyyyy[4] ? parseInt(ddmmyyyy[4], 10) : 0;
+      const mins = ddmmyyyy[5] ? parseInt(ddmmyyyy[5], 10) : 0;
+      const secs = ddmmyyyy[6] ? parseInt(ddmmyyyy[6], 10) : 0;
+      return new Date(year, month, day, hrs, mins, secs);
+    }
+    // Match YYYY-MM-DD or YYYY/MM/DD
+    const yyyymmdd = trimmed.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:\s+|T)?(\d{1,2})?:?(\d{2})?:?(\d{2})?/);
+    if (yyyymmdd) {
+      const year = parseInt(yyyymmdd[1], 10);
+      const month = parseInt(yyyymmdd[2], 10) - 1;
+      const day = parseInt(yyyymmdd[3], 10);
+      const hrs = yyyymmdd[4] ? parseInt(yyyymmdd[4], 10) : 0;
+      const mins = yyyymmdd[5] ? parseInt(yyyymmdd[5], 10) : 0;
+      const secs = yyyymmdd[6] ? parseInt(yyyymmdd[6], 10) : 0;
+      return new Date(year, month, day, hrs, mins, secs);
+    }
+    d = new Date(trimmed);
+  } else if (typeof val === 'number') {
+    d = new Date(val);
   }
-  if (val instanceof Date) {
-    return isNaN(val.getTime()) ? null : val;
+
+  if (!d || isNaN(d.getTime())) return null;
+
+  // Handle SheetJS/Excel UTC midnight timestamps (00:00:00.000Z)
+  // Convert UTC components to local Date so .getDate() and .toLocaleDateString() match calendar day
+  if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0) {
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0);
   }
-  const d = new Date(val);
-  return isNaN(d.getTime()) ? null : d;
+
+  return d;
 }
 
 /**
@@ -92,7 +150,7 @@ function formatTimeString(val: any): string {
   return String(val);
 }
 
-export const TripAnalyticsView: React.FC = () => {
+export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }> = ({ onNavigateToTripUpload }) => {
   const { userProfile, isAdmin } = useAuth();
   const downloadedBy = userProfile?.name || userProfile?.email || 'Fleet Operations Admin';
 
@@ -294,6 +352,33 @@ export const TripAnalyticsView: React.FC = () => {
   const todayStart = new Date(currentYear, currentMonth, currentDate, 0, 0, 0, 0);
   const todayEnd = new Date(currentYear, currentMonth, currentDate, 23, 59, 59, 999);
 
+  const latestUploadedDateItem = useMemo(() => {
+    return availableTripDatesList.length > 0 ? availableTripDatesList[0] : null;
+  }, [availableTripDatesList]);
+
+  const hasDataForToday = useMemo(() => {
+    return availableDateSet.has(todayKey);
+  }, [availableDateSet, todayKey]);
+
+  // Effective 24h start/end: If today has 0 trips in DB, anchor 24h scope to the latest uploaded trip date
+  const effective24hStart = useMemo(() => {
+    if (hasDataForToday) return todayStart;
+    if (latestUploadedDateItem) {
+      const d = latestUploadedDateItem.dateObj;
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    }
+    return todayStart;
+  }, [hasDataForToday, todayStart, latestUploadedDateItem]);
+
+  const effective24hEnd = useMemo(() => {
+    if (hasDataForToday) return todayEnd;
+    if (latestUploadedDateItem) {
+      const d = latestUploadedDateItem.dateObj;
+      return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+    }
+    return todayEnd;
+  }, [hasDataForToday, todayEnd, latestUploadedDateItem]);
+
   // 2. Last 7 full calendar days (Today + preceding 6 days)
   const last7DaysStart = new Date(currentYear, currentMonth, currentDate - 6, 0, 0, 0, 0);
 
@@ -340,11 +425,11 @@ export const TripAnalyticsView: React.FC = () => {
     return Array.from(map.entries()).map(([key, label]) => ({ key, label }));
   }, [clients, cabs]);
 
-  // Normalize registration helper (strips spaces, hyphens, and non-alphanumeric chars)
-  const normalizeReg = (str: string | undefined | null): string => {
-    if (!str) return '';
-    return str.toUpperCase().replace(/[^A-Z0-9]/g, '');
-  };
+  // Shared Registration Normalization Helper
+  const normalizeReg = normalizeRegistration;
+
+  // State for cab utilization table filter ('not_utilized' | 'utilized' | 'all')
+  const [utilizationTab, setUtilizationTab] = useState<'not_utilized' | 'utilized' | 'all'>('not_utilized');
 
   // Active Cabs List (status === "active", matching client filter & access)
   const activeCabsList = useMemo(() => {
@@ -365,19 +450,23 @@ export const TripAnalyticsView: React.FC = () => {
     });
   }, [cabs, isAllClientsUser, userClientKeys, selectedClientFilter]);
 
-  // Set of normalized Registrations for Trips occurring within the active time scope
-  const activeScopeTripNormRegs = useMemo(() => {
+  // Map of Normalized Registration -> Stats (tripSet, boardings, latestTripDate) for ACTIVE TIME SCOPE
+  const activeScopeCabStatsByNormMap = useMemo(() => {
     const startDateCutoff = specificDateWindow
       ? specificDateWindow.start
       : selectedPeriod === '24h'
-      ? todayStart
+      ? effective24hStart
       : selectedPeriod === '7d'
       ? last7DaysStart
       : last30DaysStart;
 
-    const endDateCutoff = specificDateWindow ? specificDateWindow.end : todayEnd;
+    const endDateCutoff = specificDateWindow
+      ? specificDateWindow.end
+      : selectedPeriod === '24h'
+      ? effective24hEnd
+      : todayEnd;
 
-    const set = new Set<string>();
+    const map = new Map<string, { tripSet: Set<string>; boardings: number; latestTripDate: Date | null }>();
 
     trips.forEach((t) => {
       if (selectedClientFilter !== 'all') {
@@ -392,20 +481,35 @@ export const TripAnalyticsView: React.FC = () => {
       const norm = normalizeReg(rawReg);
       if (!norm) return;
 
+      const tripId = t.tripId || t.id;
+      if (!tripId) return;
+
       const d = parseTripDate(t.date || t.deploymentTime);
       if (!d) return;
 
       const time = d.getTime();
       if (time >= startDateCutoff.getTime() && time <= endDateCutoff.getTime()) {
-        set.add(norm);
+        if (!map.has(norm)) {
+          map.set(norm, { tripSet: new Set<string>(), boardings: 0, latestTripDate: null });
+        }
+        const item = map.get(norm)!;
+        if (!item.tripSet.has(tripId)) {
+          item.tripSet.add(tripId);
+          item.boardings += (t.passengerCount || 1);
+        }
+        if (!item.latestTripDate || time > item.latestTripDate.getTime()) {
+          item.latestTripDate = d;
+        }
       }
     });
 
-    return set;
+    return map;
   }, [
     trips,
     specificDateWindow,
     selectedPeriod,
+    effective24hStart,
+    effective24hEnd,
     todayStart,
     todayEnd,
     last7DaysStart,
@@ -413,9 +517,14 @@ export const TripAnalyticsView: React.FC = () => {
     selectedClientFilter,
   ]);
 
-  // Map of Normalized Reg -> Most Recent Trip Date across ALL trip history
-  const lastTripDateByCabNormMap = useMemo(() => {
-    const map = new Map<string, Date>();
+  // Set of normalized Registrations for Trips occurring within the active time scope
+  const activeScopeTripNormRegs = useMemo(() => {
+    return new Set(activeScopeCabStatsByNormMap.keys());
+  }, [activeScopeCabStatsByNormMap]);
+
+  // Map of Normalized Reg -> Most Recent Trip Date & History Stats across ALL trip history
+  const allHistoryCabStatsByNormMap = useMemo(() => {
+    const map = new Map<string, { tripSet: Set<string>; boardings: number; latestTripDate: Date | null }>();
     trips.forEach((t) => {
       const rawReg = t.registration;
       if (!rawReg) return;
@@ -423,16 +532,36 @@ export const TripAnalyticsView: React.FC = () => {
       const norm = normalizeReg(rawReg);
       if (!norm) return;
 
+      const tripId = t.tripId || t.id;
       const d = parseTripDate(t.date || t.deploymentTime);
-      if (!d) return;
 
-      const existing = map.get(norm);
-      if (!existing || d.getTime() > existing.getTime()) {
-        map.set(norm, d);
+      if (!map.has(norm)) {
+        map.set(norm, { tripSet: new Set<string>(), boardings: 0, latestTripDate: null });
+      }
+
+      const item = map.get(norm)!;
+      if (tripId && !item.tripSet.has(tripId)) {
+        item.tripSet.add(tripId);
+        item.boardings += (t.passengerCount || 1);
+      }
+
+      if (d) {
+        if (!item.latestTripDate || d.getTime() > item.latestTripDate.getTime()) {
+          item.latestTripDate = d;
+        }
       }
     });
     return map;
   }, [trips]);
+
+  // Map of Normalized Reg -> Most Recent Trip Date across ALL trip history
+  const lastTripDateByCabNormMap = useMemo(() => {
+    const map = new Map<string, Date>();
+    allHistoryCabStatsByNormMap.forEach((val, key) => {
+      if (val.latestTripDate) map.set(key, val.latestTripDate);
+    });
+    return map;
+  }, [allHistoryCabStatsByNormMap]);
 
   // Compute Utilization metrics & partitioned lists
   const cabUtilizationData = useMemo(() => {
@@ -465,19 +594,28 @@ export const TripAnalyticsView: React.FC = () => {
     };
   }, [activeCabsList, activeScopeTripNormRegs]);
 
-  // Filtered list of Not Utilized Cabs for the table search
+  // Filtered list of Cabs for the Utilization table (supports tab switching & search)
   const filteredNotUtilizedCabs = useMemo(() => {
+    let list: Cab[] = [];
+    if (utilizationTab === 'not_utilized') {
+      list = cabUtilizationData.notUtilizedCabs;
+    } else if (utilizationTab === 'utilized') {
+      list = cabUtilizationData.utilizedCabs;
+    } else {
+      list = activeCabsList;
+    }
+
     if (!notUtilizedSearchQuery.trim()) {
-      return cabUtilizationData.notUtilizedCabs;
+      return list;
     }
     const q = notUtilizedSearchQuery.trim().toLowerCase();
-    return cabUtilizationData.notUtilizedCabs.filter((cab) => {
+    return list.filter((cab) => {
       const reg = (cab.registrationNumber || '').toLowerCase();
       const vType = (cab.vehicleType || '').toLowerCase();
       const client = (cab.clientName || '').toLowerCase();
       return reg.includes(q) || vType.includes(q) || client.includes(q);
     });
-  }, [cabUtilizationData.notUtilizedCabs, notUtilizedSearchQuery]);
+  }, [cabUtilizationData, activeCabsList, utilizationTab, notUtilizedSearchQuery]);
 
   const formatLastTripLabel = (date: Date | null): string => {
     if (!date || isNaN(date.getTime())) {
@@ -557,8 +695,8 @@ export const TripAnalyticsView: React.FC = () => {
       const t = d.getTime();
       const pax = trip.passengerCount || 1;
 
-      // Check 24 Hours (Today's full calendar day)
-      if (t >= todayStart.getTime() && t <= todayEnd.getTime()) {
+      // Check 24 Hours (Effective 24h window)
+      if (t >= effective24hStart.getTime() && t <= effective24hEnd.getTime()) {
         if (!trips24hSet.has(tripId)) {
           trips24hSet.add(tripId);
           totalPassengers24h += pax;
@@ -595,8 +733,8 @@ export const TripAnalyticsView: React.FC = () => {
   // Construct chart data depending on selectedPeriod or specificDateWindow
   const chartData = useMemo(() => {
     if (specificDateWindow || selectedPeriod === '24h') {
-      const windowStart = specificDateWindow ? specificDateWindow.start : todayStart;
-      const windowEnd = specificDateWindow ? specificDateWindow.end : todayEnd;
+      const windowStart = specificDateWindow ? specificDateWindow.start : effective24hStart;
+      const windowEnd = specificDateWindow ? specificDateWindow.end : effective24hEnd;
 
       // Hourly breakdown (00:00 to 23:00)
       const hourBuckets: { [hour: number]: Set<string> } = {};
@@ -703,7 +841,7 @@ export const TripAnalyticsView: React.FC = () => {
     const endDateCutoff = specificDateWindow ? specificDateWindow.end : todayEnd;
 
     const cabMap: {
-      [reg: string]: {
+      [normReg: string]: {
         registration: string;
         tripSet: Set<string>;
         passengers: number;
@@ -714,8 +852,11 @@ export const TripAnalyticsView: React.FC = () => {
     } = {};
 
     trips.forEach((t) => {
-      const reg = (t.registration || '').trim().toUpperCase();
-      if (!reg) return;
+      const rawReg = t.registration;
+      if (!rawReg) return;
+
+      const norm = normalizeRegistration(rawReg);
+      if (!norm) return;
 
       const tripId = t.tripId || t.id;
       if (!tripId) return;
@@ -724,9 +865,9 @@ export const TripAnalyticsView: React.FC = () => {
       if (!d) return;
 
       if (d.getTime() >= startDateCutoff.getTime() && d.getTime() <= endDateCutoff.getTime()) {
-        if (!cabMap[reg]) {
-          cabMap[reg] = {
-            registration: reg,
+        if (!cabMap[norm]) {
+          cabMap[norm] = {
+            registration: rawReg.trim().toUpperCase(),
             tripSet: new Set<string>(),
             passengers: 0,
             drivers: new Set<string>(),
@@ -735,17 +876,17 @@ export const TripAnalyticsView: React.FC = () => {
           };
         }
 
-        if (!cabMap[reg].tripSet.has(tripId)) {
-          cabMap[reg].tripSet.add(tripId);
-          cabMap[reg].passengers += t.passengerCount || 1;
+        if (!cabMap[norm].tripSet.has(tripId)) {
+          cabMap[norm].tripSet.add(tripId);
+          cabMap[norm].passengers += t.passengerCount || 1;
         }
 
         if (t.driverName && t.driverName.trim()) {
-          cabMap[reg].drivers.add(t.driverName.trim());
+          cabMap[norm].drivers.add(t.driverName.trim());
         }
 
-        if (!cabMap[reg].latestTripDate || d.getTime() > cabMap[reg].latestTripDate!.getTime()) {
-          cabMap[reg].latestTripDate = d;
+        if (!cabMap[norm].latestTripDate || d.getTime() > cabMap[norm].latestTripDate!.getTime()) {
+          cabMap[norm].latestTripDate = d;
         }
       }
     });
@@ -753,55 +894,49 @@ export const TripAnalyticsView: React.FC = () => {
     return Object.values(cabMap).sort((a, b) => b.tripSet.size - a.tripSet.size);
   }, [trips, specificDateWindow, selectedPeriod, todayStart, todayEnd, last7DaysStart, last30DaysStart]);
 
-  // All distinct cab registrations in the database
+  // All distinct cab registrations across trips and cabs database
   const allDistinctRegistrations = useMemo(() => {
     const set = new Set<string>();
     trips.forEach((t) => {
       const reg = (t.registration || '').trim().toUpperCase();
       if (reg) set.add(reg);
     });
+    cabs.forEach((c) => {
+      const reg = (c.registrationNumber || '').trim().toUpperCase();
+      if (reg) set.add(reg);
+    });
     return Array.from(set).sort();
-  }, [trips]);
+  }, [trips, cabs]);
 
-  // Compute matching cab registrations ignoring hyphens, spaces, and case
+  // Compute matching cab registrations ignoring hyphens, spaces, leading zeros, and case
   const digitMatchingCabs = useMemo(() => {
-    const q = digitSearch.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    if (!q) return [];
+    const rawQ = digitSearch.trim();
+    if (!rawQ) return [];
 
-    // Prioritize registrations that END WITH those digits
-    const endsWithMatches = allDistinctRegistrations.filter((reg) => {
-      const norm = reg.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-      return norm.endsWith(q);
+    const normQ = normalizeRegistration(rawQ);
+
+    const matches = allDistinctRegistrations.filter((reg) => {
+      const normReg = normalizeRegistration(reg);
+      return normReg.includes(normQ);
     });
 
-    if (endsWithMatches.length > 0) {
-      return endsWithMatches;
-    }
-
-    // Fallback to substring match if no exact endsWith match
-    return allDistinctRegistrations.filter((reg) => {
-      const norm = reg.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-      return norm.includes(q);
-    });
+    return matches;
   }, [allDistinctRegistrations, digitSearch]);
 
   const handleDigitSearchChange = (val: string) => {
     setDigitSearch(val);
-    const q = val.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-    if (!q) return;
+    const rawQ = val.trim();
+    if (!rawQ) return;
 
-    const endsWithMatches = allDistinctRegistrations.filter((reg) => {
-      const norm = reg.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-      return norm.endsWith(q);
+    const normQ = normalizeRegistration(rawQ);
+
+    const matches = allDistinctRegistrations.filter((reg) => {
+      const normReg = normalizeRegistration(reg);
+      return normReg.includes(normQ);
     });
 
-    const matches = endsWithMatches.length > 0 ? endsWithMatches : allDistinctRegistrations.filter((reg) => {
-      const norm = reg.replace(/[^a-zA-Z0-9]/g, '').toUpperCase();
-      return norm.includes(q);
-    });
-
-    // If search matches EXACTLY ONE CAB and user typed at least 3 digits, directly open drill-down
-    if (matches.length === 1 && q.length >= 3) {
+    // If search matches EXACTLY ONE CAB and user typed at least 3 chars, directly open drill-down
+    if (matches.length === 1 && rawQ.length >= 3) {
       setSelectedCabReg(matches[0]);
       setCabSearchQuery('');
     }
@@ -820,12 +955,16 @@ export const TripAnalyticsView: React.FC = () => {
     const startDateCutoff = specificDateWindow
       ? specificDateWindow.start
       : selectedPeriod === '24h'
-      ? todayStart
+      ? effective24hStart
       : selectedPeriod === '7d'
       ? last7DaysStart
       : last30DaysStart;
 
-    const endDateCutoff = specificDateWindow ? specificDateWindow.end : todayEnd;
+    const endDateCutoff = specificDateWindow
+      ? specificDateWindow.end
+      : selectedPeriod === '24h'
+      ? effective24hEnd
+      : todayEnd;
 
     const matchedSet = new Set<string>();
     const result: Trip[] = [];
@@ -862,7 +1001,7 @@ export const TripAnalyticsView: React.FC = () => {
       const dbDate = parseTripDate(b.date || b.deploymentTime)?.getTime() || 0;
       return dbDate - da;
     });
-  }, [trips, specificDateWindow, selectedPeriod, searchQuery, todayStart, todayEnd, last7DaysStart, last30DaysStart]);
+  }, [trips, specificDateWindow, selectedPeriod, searchQuery, effective24hStart, effective24hEnd, todayStart, todayEnd, last7DaysStart, last30DaysStart]);
 
   // Trips performed by the selected cab during the selected period or specific date
   const selectedCabTrips = useMemo(() => {
@@ -871,20 +1010,24 @@ export const TripAnalyticsView: React.FC = () => {
     const startDateCutoff = specificDateWindow
       ? specificDateWindow.start
       : selectedPeriod === '24h'
-      ? todayStart
+      ? effective24hStart
       : selectedPeriod === '7d'
       ? last7DaysStart
       : last30DaysStart;
 
-    const endDateCutoff = specificDateWindow ? specificDateWindow.end : todayEnd;
+    const endDateCutoff = specificDateWindow
+      ? specificDateWindow.end
+      : selectedPeriod === '24h'
+      ? effective24hEnd
+      : todayEnd;
 
-    const targetReg = selectedCabReg.trim().toUpperCase();
+    const targetNorm = normalizeRegistration(selectedCabReg);
     const matchedSet = new Set<string>();
     const list: Trip[] = [];
 
     trips.forEach((t) => {
-      const reg = (t.registration || '').trim().toUpperCase();
-      if (reg !== targetReg) return;
+      const norm = normalizeRegistration(t.registration);
+      if (norm !== targetNorm) return;
 
       const tripId = t.tripId || t.id;
       if (!tripId || matchedSet.has(tripId)) return;
@@ -917,7 +1060,11 @@ export const TripAnalyticsView: React.FC = () => {
       const dbDate = parseTripDate(b.date || b.deploymentTime)?.getTime() || 0;
       return dbDate - da;
     });
-  }, [trips, selectedCabReg, specificDateWindow, selectedPeriod, cabSearchQuery, todayStart, todayEnd, last7DaysStart, last30DaysStart]);
+  }, [trips, selectedCabReg, specificDateWindow, selectedPeriod, cabSearchQuery, effective24hStart, effective24hEnd, todayStart, todayEnd, last7DaysStart, last30DaysStart]);
+
+  const selectedCabBoardings = useMemo(() => {
+    return selectedCabTrips.reduce((sum, t) => sum + (t.passengerCount || 1), 0);
+  }, [selectedCabTrips]);
 
   const formatDateLabel = (val: any) => {
     if (!val) return 'N/A';
@@ -933,7 +1080,9 @@ export const TripAnalyticsView: React.FC = () => {
   const activePeriodTitle = specificDateWindow
     ? `Specific Date (${specificDateWindow.formattedLabel})`
     : selectedPeriod === '24h'
-    ? 'Today (Last 24 Hours: 00:00–23:59)'
+    ? (hasDataForToday
+        ? 'Today (Last 24 Hours: 00:00–23:59)'
+        : `Latest Uploaded Data (${latestUploadedDateItem?.dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) || '24 Hours'})`)
     : selectedPeriod === '7d'
     ? 'Last 7 Calendar Days'
     : 'Last 1 Month (30 Calendar Days)';
@@ -1002,7 +1151,9 @@ export const TripAnalyticsView: React.FC = () => {
                     : 'text-slate-600 hover:text-slate-900'
                 }`}
               >
-                24 Hours (Today)
+                {hasDataForToday
+                  ? '24 Hours (Today)'
+                  : `24 Hours (${latestUploadedDateItem ? latestUploadedDateItem.dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : 'Today'})`}
               </button>
               <button
                 onClick={() => {
@@ -1073,6 +1224,19 @@ export const TripAnalyticsView: React.FC = () => {
                         <X className="w-3.5 h-3.5" />
                       </button>
                     </div>
+
+                    {/* Notice if Today is missing from uploaded dataset */}
+                    {!hasDataForToday && (
+                      <div className="bg-slate-800/90 border border-amber-500/40 p-2.5 rounded-xl text-xs space-y-1">
+                        <div className="flex items-center gap-1.5 text-amber-300 font-bold">
+                          <AlertTriangle className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                          <span>No trips recorded for Today ({todayKey})</span>
+                        </div>
+                        <p className="text-[11px] text-slate-300">
+                          Latest uploaded date: <strong className="text-amber-300">{latestUploadedDateItem ? latestUploadedDateItem.dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A'}</strong> ({latestUploadedDateItem?.count || 0} trips).
+                        </p>
+                      </div>
+                    )}
 
                     {/* Quick Date Input */}
                     <div className="space-y-1.5">
@@ -1326,6 +1490,38 @@ export const TripAnalyticsView: React.FC = () => {
         </div>
       </div>
 
+      {/* LATEST DATA ALERT BANNER WHEN TODAY HAS 0 UPLOADED TRIPS */}
+      {!hasDataForToday && latestUploadedDateItem && (
+        <div className="bg-gradient-to-r from-slate-900 via-amber-950/80 to-slate-900 border border-amber-600/70 text-amber-100 rounded-3xl p-5 shadow-lg flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 animate-in fade-in duration-200">
+          <div className="flex items-start sm:items-center gap-3.5">
+            <div className="p-2.5 bg-amber-500/20 text-amber-400 rounded-2xl shrink-0 mt-0.5 sm:mt-0 border border-amber-500/30">
+              <AlertTriangle className="w-5 h-5" />
+            </div>
+            <div>
+              <p className="text-xs font-bold text-amber-100 flex items-center gap-2 flex-wrap">
+                <span>No trip sheet uploaded for Today ({todayKey}) yet.</span>
+                <span className="bg-amber-500/20 text-amber-300 font-mono text-[11px] px-2.5 py-0.5 rounded-md border border-amber-500/30 font-semibold">
+                  Showing Latest Data: {latestUploadedDateItem.dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} ({latestUploadedDateItem.count} trips)
+                </span>
+              </p>
+              <p className="text-[11px] text-amber-300/80 mt-1">
+                All 24-hour metrics, charts, and vehicle utilization tables are currently anchored to the latest uploaded dataset ({latestUploadedDateItem.dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}). Upload a trip sheet for 09 Aug / 10 Aug to refresh live metrics.
+              </p>
+            </div>
+          </div>
+          {onNavigateToTripUpload && (
+            <button
+              type="button"
+              onClick={onNavigateToTripUpload}
+              className="bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs px-4 py-2.5 rounded-2xl transition-all shrink-0 shadow-md flex items-center gap-2 cursor-pointer border border-amber-400/50"
+            >
+              <Truck className="w-4 h-4" />
+              <span>+ Upload 09/10 Aug Data Sheet</span>
+            </button>
+          )}
+        </div>
+      )}
+
       {/* SPECIFIC DATE HEADLINE CARD */}
       {specificDateWindow && (
         <div className="bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 border border-blue-600/80 rounded-3xl p-6 text-white shadow-xl flex flex-col md:flex-row md:items-center justify-between gap-4 animate-in fade-in duration-200">
@@ -1473,7 +1669,9 @@ export const TripAnalyticsView: React.FC = () => {
           <div className="flex items-start justify-between gap-2">
             <div>
               <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
-                Trips — Last 24 Hours
+                {hasDataForToday
+                  ? 'Trips — Last 24 Hours'
+                  : `Trips — Last 24 Hours (${latestUploadedDateItem ? latestUploadedDateItem.dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : 'Today'})`}
               </span>
               <p className="text-3xl font-black text-slate-900 font-mono mt-1">
                 {analyticsSummary.count24h.toLocaleString()}
@@ -1485,7 +1683,11 @@ export const TripAnalyticsView: React.FC = () => {
           </div>
 
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-            <span className="text-slate-500 font-medium">Rule: Today 00:00 – 23:59</span>
+            <span className="text-slate-500 font-medium">
+              {hasDataForToday
+                ? 'Rule: Today 00:00 – 23:59'
+                : `Latest Data: ${latestUploadedDateItem ? latestUploadedDateItem.dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A'}`}
+            </span>
             <span className="font-bold text-blue-800 font-mono bg-blue-100/80 px-2 py-0.5 rounded-full">
               {analyticsSummary.pax24h} Pax
             </span>
@@ -1653,47 +1855,84 @@ export const TripAnalyticsView: React.FC = () => {
           </div>
         </div>
 
-        {/* NOT UTILIZED CABS TABLE SECTION */}
+        {/* CAB UTILIZATION DETAILS TABLE SECTION */}
         <div className="space-y-4 pt-2">
-          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 bg-slate-900 text-white p-4 rounded-2xl shadow-xs">
+          <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-3 bg-slate-900 text-white p-4 rounded-2xl shadow-xs">
             <div>
               <div className="flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-amber-400 shrink-0" />
+                <Car className="w-4 h-4 text-blue-400 shrink-0" />
                 <h4 className="font-bold text-sm text-white">
-                  Not Utilized Cabs Details ({cabUtilizationData.notUtilizedCount})
+                  Fleet Utilization Details ({cabUtilizationData.activeCount} Cabs)
                 </h4>
               </div>
               <p className="text-xs text-slate-300 mt-0.5">
-                Active registered cabs with 0 recorded trips during {activePeriodTitle}.
+                Detailed utilization status and metrics for registered active cabs during {activePeriodTitle}.
               </p>
             </div>
 
-            {/* Table Search Input */}
-            <div className="relative w-full sm:w-64">
-              <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
-              <input
-                type="text"
-                placeholder="Search reg, type, client..."
-                value={notUtilizedSearchQuery}
-                onChange={(e) => setNotUtilizedSearchQuery(e.target.value)}
-                className="w-full pl-8 pr-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
-              />
+            <div className="flex flex-col sm:flex-row items-stretch sm:items-center gap-3">
+              {/* Tab Selector */}
+              <div className="flex bg-slate-800 p-1 rounded-xl border border-slate-700 text-xs">
+                <button
+                  type="button"
+                  onClick={() => setUtilizationTab('not_utilized')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                    utilizationTab === 'not_utilized'
+                      ? 'bg-amber-500 text-slate-950 shadow-xs'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  Not Utilized ({cabUtilizationData.notUtilizedCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUtilizationTab('utilized')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                    utilizationTab === 'utilized'
+                      ? 'bg-emerald-600 text-white shadow-xs'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  Utilized ({cabUtilizationData.utilizedCount})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setUtilizationTab('all')}
+                  className={`px-3 py-1.5 rounded-lg font-bold transition-all cursor-pointer ${
+                    utilizationTab === 'all'
+                      ? 'bg-blue-600 text-white shadow-xs'
+                      : 'text-slate-300 hover:text-white'
+                  }`}
+                >
+                  All Cabs ({cabUtilizationData.activeCount})
+                </button>
+              </div>
+
+              {/* Table Search Input */}
+              <div className="relative w-full sm:w-56">
+                <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                <input
+                  type="text"
+                  placeholder="Search reg, type, client..."
+                  value={notUtilizedSearchQuery}
+                  onChange={(e) => setNotUtilizedSearchQuery(e.target.value)}
+                  className="w-full pl-8 pr-3 py-1.5 bg-slate-800 border border-slate-700 rounded-xl text-xs text-white placeholder-slate-400 focus:outline-none focus:border-blue-500"
+                />
+              </div>
             </div>
           </div>
 
-          {cabUtilizationData.notUtilizedCount === 0 ? (
-            <div className="p-8 text-center bg-emerald-50/90 border border-emerald-200 rounded-2xl space-y-2">
+          {filteredNotUtilizedCabs.length === 0 ? (
+            <div className="p-8 text-center bg-slate-50 border border-slate-200 rounded-2xl space-y-2">
               <CheckCircle2 className="w-10 h-10 text-emerald-600 mx-auto" />
-              <p className="font-bold text-emerald-950 text-base">
-                100% Fleet Utilization Achieved!
+              <p className="font-bold text-slate-800 text-base">
+                No cabs found in this category
               </p>
-              <p className="text-xs text-emerald-800 max-w-md mx-auto">
-                All {cabUtilizationData.activeCount} active registered cabs performed at least 1 trip during {activePeriodTitle}.
+              <p className="text-xs text-slate-500 max-w-md mx-auto">
+                {notUtilizedSearchQuery
+                  ? `No cabs matching search query "${notUtilizedSearchQuery}".`
+                  : `There are currently 0 cabs in the ${utilizationTab.replace('_', ' ')} list.`}
               </p>
-            </div>
-          ) : filteredNotUtilizedCabs.length === 0 ? (
-            <div className="p-6 text-center bg-slate-50 border border-slate-200 rounded-2xl text-xs text-slate-500">
-              No unutilized cabs match your search query "{notUtilizedSearchQuery}".
             </div>
           ) : (
             <div className="overflow-x-auto rounded-2xl border border-slate-200 shadow-2xs">
@@ -1704,6 +1943,8 @@ export const TripAnalyticsView: React.FC = () => {
                     <th className="p-3">Registration Number</th>
                     <th className="p-3">Vehicle Type</th>
                     <th className="p-3">Client</th>
+                    <th className="p-3">Utilization Status</th>
+                    <th className="p-3">Period Metrics ({activePeriodTitle})</th>
                     <th className="p-3">Most Recent Trip History</th>
                     <th className="p-3 text-right">Action</th>
                   </tr>
@@ -1711,14 +1952,24 @@ export const TripAnalyticsView: React.FC = () => {
                 <tbody className="divide-y divide-slate-200 bg-white">
                   {filteredNotUtilizedCabs.map((cab, idx) => {
                     const norm = normalizeReg(cab.registrationNumber);
+                    const isUtilizedInScope = activeScopeTripNormRegs.has(norm);
+                    const scopeStats = activeScopeCabStatsByNormMap.get(norm);
+                    const totalTripsInScope = scopeStats?.tripSet.size || 0;
+                    const totalBoardingsInScope = scopeStats?.boardings || 0;
+
                     const lastTripDate = lastTripDateByCabNormMap.get(norm) || null;
                     const lastTripText = formatLastTripLabel(lastTripDate);
 
                     return (
-                      <tr key={cab.id || cab.registrationNumber || idx} className="hover:bg-amber-50/40 transition-colors">
+                      <tr
+                        key={cab.id || cab.registrationNumber || idx}
+                        className={`transition-colors ${
+                          isUtilizedInScope ? 'hover:bg-emerald-50/30' : 'hover:bg-amber-50/40'
+                        }`}
+                      >
                         <td className="p-3 text-slate-400 font-mono text-[11px]">{idx + 1}</td>
                         <td className="p-3 font-mono font-bold text-slate-900 whitespace-nowrap">
-                          <span className="bg-slate-100 text-slate-900 px-2 py-1 rounded border border-slate-200">
+                          <span className="bg-slate-100 text-slate-900 px-2.5 py-1 rounded border border-slate-200">
                             {cab.registrationNumber}
                           </span>
                         </td>
@@ -1730,6 +1981,29 @@ export const TripAnalyticsView: React.FC = () => {
                             <Building2 className="w-3 h-3 text-slate-400" />
                             {cab.clientName || 'N/A'}
                           </span>
+                        </td>
+                        <td className="p-3 whitespace-nowrap">
+                          {isUtilizedInScope ? (
+                            <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-900 font-bold text-[11px] px-2.5 py-1 rounded-full border border-emerald-200">
+                              <CheckCircle2 className="w-3 h-3 text-emerald-600" />
+                              Utilized
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-900 font-bold text-[11px] px-2.5 py-1 rounded-full border border-amber-200">
+                              <AlertTriangle className="w-3 h-3 text-amber-600" />
+                              Not Utilized
+                            </span>
+                          )}
+                        </td>
+                        <td className="p-3 font-mono text-xs whitespace-nowrap">
+                          <div className="flex items-center gap-2">
+                            <span className="bg-blue-50 text-blue-900 font-bold px-2 py-0.5 rounded border border-blue-200">
+                              Total Trips: {totalTripsInScope}
+                            </span>
+                            <span className="bg-emerald-50 text-emerald-900 font-bold px-2 py-0.5 rounded border border-emerald-200">
+                              Total Boardings: {totalBoardingsInScope}
+                            </span>
+                          </div>
                         </td>
                         <td className="p-3 font-mono text-xs whitespace-nowrap">
                           {lastTripDate ? (
@@ -2046,10 +2320,10 @@ export const TripAnalyticsView: React.FC = () => {
                 </div>
                 {/* HEADLINE REQUIREMENT: "HR-55-BD-0996 — 14 trips in the last 7 days" */}
                 <h3 className="text-xl sm:text-2xl font-black font-mono tracking-tight text-white">
-                  {selectedCabReg} — {selectedCabTrips.length} {selectedCabTrips.length === 1 ? 'trip' : 'trips'} in the last {periodHeadlineText}
+                  {selectedCabReg} — Total Trips: {selectedCabTrips.length} | Total Boardings: {selectedCabBoardings}
                 </h3>
                 <p className="text-xs text-slate-400 mt-1">
-                  Individual trips recorded between 00:00 and 23:59 for the selected period ({activePeriodTitle}), sorted by most recent first.
+                  Individual trips recorded during the selected period ({activePeriodTitle}), sorted by most recent first.
                 </p>
               </div>
 
@@ -2087,12 +2361,11 @@ export const TripAnalyticsView: React.FC = () => {
             {/* Modal Controls & Search */}
             <div className="p-4 sm:p-6 bg-slate-50 border-b border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <div className="bg-blue-100 text-blue-800 font-mono font-bold text-xs px-3 py-1.5 rounded-xl border border-blue-200">
+                <div className="bg-blue-100 text-blue-900 font-mono font-bold text-xs px-3 py-1.5 rounded-xl border border-blue-200">
                   Total Trips: {selectedCabTrips.length}
                 </div>
-                <div className="bg-emerald-100 text-emerald-800 font-mono font-bold text-xs px-3 py-1.5 rounded-xl border border-emerald-200">
-                  Total Passengers:{' '}
-                  {selectedCabTrips.reduce((acc, curr) => acc + (curr.passengerCount || 1), 0)} Pax
+                <div className="bg-emerald-100 text-emerald-900 font-mono font-bold text-xs px-3 py-1.5 rounded-xl border border-emerald-200">
+                  Total Boardings: {selectedCabBoardings}
                 </div>
               </div>
 

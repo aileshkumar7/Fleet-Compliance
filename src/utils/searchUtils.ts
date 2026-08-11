@@ -4,10 +4,11 @@
  */
 
 import { Cab, Driver } from '../types';
+import { normalizeRegistration } from './registrationUtils';
 
 /**
  * Robustly matches vehicle registration numbers, with dedicated support for last 4 digits
- * (e.g. searching "1234" matches "DL 01 AB 1234", "KA-01-MJ-1234", "MH12AB1234", etc.)
+ * (e.g. searching "1234" or "0259" matches "DL 01 AB 1234", "DL-01-ZE-0259", "DL-1-ZE-0259", etc.)
  */
 export function matchVehicleRegistration(registrationNumber: string | undefined | null, query: string): boolean {
   if (!registrationNumber || !query) return false;
@@ -19,7 +20,13 @@ export function matchVehicleRegistration(registrationNumber: string | undefined 
   // 1. Direct raw substring match
   if (rawReg.includes(rawQuery)) return true;
 
-  // 2. Normalized alphanumeric match (strips spaces, hyphens, special chars)
+  // 2. Standardized normalization match (removes leading zeros, hyphens, spaces)
+  const normReg = normalizeRegistration(registrationNumber);
+  const normQuery = normalizeRegistration(query);
+
+  if (normQuery && normReg.includes(normQuery)) return true;
+
+  // 3. Clean alphanumeric match
   const cleanReg = rawReg.replace(/[^a-z0-9]/g, '');
   const cleanQuery = rawQuery.replace(/[^a-z0-9]/g, '');
 
@@ -27,9 +34,9 @@ export function matchVehicleRegistration(registrationNumber: string | undefined 
 
   if (cleanReg.includes(cleanQuery)) return true;
 
-  // 3. Last 4 digits specific match
-  if (/^\d{4}$/.test(cleanQuery)) {
-    return cleanReg.endsWith(cleanQuery) || cleanReg.includes(cleanQuery);
+  // 4. Last 4 digits specific match
+  if (/^\d{3,4}$/.test(cleanQuery)) {
+    return cleanReg.endsWith(cleanQuery) || cleanReg.includes(cleanQuery) || normReg.endsWith(cleanQuery);
   }
 
   return false;

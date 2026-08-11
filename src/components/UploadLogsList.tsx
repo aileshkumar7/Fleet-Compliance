@@ -25,7 +25,8 @@ import {
   Trash2,
   AlertTriangle,
   Trash,
-  ShieldAlert
+  ShieldAlert,
+  Car
 } from 'lucide-react';
 
 export const UploadLogsList: React.FC = () => {
@@ -83,14 +84,19 @@ export const UploadLogsList: React.FC = () => {
     setIsDeleting(true);
     try {
       if (log.batchId) {
+        const batch = writeBatch(db);
+
         const dQuery = query(collection(db, 'drivers'), where('uploadBatchId', '==', log.batchId));
         const dSnap = await getDocs(dQuery);
-        const batch = writeBatch(db);
         dSnap.forEach(d => batch.delete(d.ref));
 
         const cQuery = query(collection(db, 'cabs'), where('uploadBatchId', '==', log.batchId));
         const cSnap = await getDocs(cQuery);
         cSnap.forEach(c => batch.delete(c.ref));
+
+        const tQuery = query(collection(db, 'trips'), where('uploadBatchId', '==', log.batchId));
+        const tSnap = await getDocs(tQuery);
+        tSnap.forEach(t => batch.delete(t.ref));
 
         await batch.commit();
       }
@@ -109,13 +115,22 @@ export const UploadLogsList: React.FC = () => {
     }
   };
 
-  const handleWipeAllData = async () => {
+  const handleWipeAllData = async (targetCategory: 'master' | 'trips' | 'all' = 'all') => {
     setIsDeleting(true);
     try {
-      const dSnap = await getDocs(collection(db, 'drivers'));
-      const cSnap = await getDocs(collection(db, 'cabs'));
-      
-      const docsToDelete = [...dSnap.docs, ...cSnap.docs];
+      const docsToDelete: any[] = [];
+
+      if (targetCategory === 'master' || targetCategory === 'all') {
+        const dSnap = await getDocs(collection(db, 'drivers'));
+        const cSnap = await getDocs(collection(db, 'cabs'));
+        docsToDelete.push(...dSnap.docs, ...cSnap.docs);
+      }
+
+      if (targetCategory === 'trips' || targetCategory === 'all') {
+        const tSnap = await getDocs(collection(db, 'trips'));
+        docsToDelete.push(...tSnap.docs);
+      }
+
       for (let i = 0; i < docsToDelete.length; i += 400) {
         const batch = writeBatch(db);
         const chunk = docsToDelete.slice(i, i + 400);
@@ -141,8 +156,14 @@ export const UploadLogsList: React.FC = () => {
     return matchesFilter && matchesSearch;
   }) || [];
 
-  const addedCount = selectedLog?.changes?.filter(c => c.changeType === 'added').length || selectedLog?.details?.driversAdded! + selectedLog?.details?.cabsAdded! || 0;
-  const updatedCount = selectedLog?.changes?.filter(c => c.changeType === 'updated').length || selectedLog?.details?.driversUpdated! + selectedLog?.details?.cabsUpdated! || 0;
+  const isTripLog = selectedLog?.uploadType === 'trips' || selectedLog?.details?.tripsAdded !== undefined;
+
+  const addedCount = selectedLog?.changes?.filter(c => c.changeType === 'added').length || 
+    (isTripLog ? (selectedLog?.details?.tripsAdded || 0) : ((selectedLog?.details?.driversAdded || 0) + (selectedLog?.details?.cabsAdded || 0)));
+
+  const updatedCount = selectedLog?.changes?.filter(c => c.changeType === 'updated').length || 
+    (isTripLog ? (selectedLog?.details?.tripsUpdated || 0) : ((selectedLog?.details?.driversUpdated || 0) + (selectedLog?.details?.cabsUpdated || 0)));
+
   const statusChangedCount = selectedLog?.changes?.filter(c => c.changeType === 'status_changed').length || 0;
 
   if (selectedLog) {
@@ -470,9 +491,24 @@ export const UploadLogsList: React.FC = () => {
                       onClick={() => setSelectedLog(log)}
                       className="px-6 py-4 cursor-pointer"
                     >
-                      <div className="flex items-center gap-2.5">
-                        <FileSpreadsheet className="w-4 h-4 text-blue-600 shrink-0 group-hover:scale-110 transition-transform" />
-                        <span className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors">{log.fileName}</span>
+                      <div className="flex flex-col gap-1">
+                        <div className="flex items-center gap-2">
+                          <FileSpreadsheet className={`w-4 h-4 ${log.uploadType === 'trips' || log.details?.tripsAdded !== undefined ? 'text-purple-600' : 'text-blue-600'} shrink-0 group-hover:scale-110 transition-transform`} />
+                          <span className="font-bold text-slate-800 group-hover:text-blue-600 transition-colors">{log.fileName}</span>
+                        </div>
+                        <div>
+                          {log.uploadType === 'trips' || log.details?.tripsAdded !== undefined ? (
+                            <span className="inline-flex items-center gap-1 text-[10px] bg-purple-50 text-purple-800 font-bold px-2 py-0.5 rounded border border-purple-200">
+                              <Car className="w-3 h-3 text-purple-600" />
+                              <span>BA Trip Data</span>
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-[10px] bg-blue-50 text-blue-800 font-bold px-2 py-0.5 rounded border border-blue-200">
+                              <Truck className="w-3 h-3 text-blue-600" />
+                              <span>Vehicles & Drivers</span>
+                            </span>
+                          )}
+                        </div>
                       </div>
                     </td>
                     <td 
@@ -505,7 +541,16 @@ export const UploadLogsList: React.FC = () => {
                       onClick={() => setSelectedLog(log)}
                       className="px-6 py-4 cursor-pointer"
                     >
-                      {log.details ? (
+                      {log.uploadType === 'trips' || log.details?.tripsAdded !== undefined ? (
+                        <div className="flex items-center gap-2 text-[11px] font-medium flex-wrap">
+                          <span className="text-purple-800 bg-purple-50 px-2.5 py-0.5 rounded border border-purple-200 font-bold">
+                            +{log.details?.tripsAdded || 0} Trips
+                          </span>
+                          <span className="text-blue-800 bg-blue-50 px-2.5 py-0.5 rounded border border-blue-200 font-bold">
+                            ↻{log.details?.tripsUpdated || 0} Trips Updated
+                          </span>
+                        </div>
+                      ) : log.details ? (
                         <div className="flex items-center gap-2 text-[11px] font-medium flex-wrap">
                           <span className="text-emerald-700 bg-emerald-50 px-2 py-0.5 rounded border border-emerald-100">
                             +{log.details.driversAdded || 0} Drv
@@ -591,7 +636,7 @@ export const UploadLogsList: React.FC = () => {
                 className="w-full bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-3 px-4 rounded-xl transition-colors cursor-pointer flex items-center justify-between shadow-2xs"
               >
                 <span>2. Delete Log & All Records in Batch</span>
-                <span className="text-[11px] font-normal text-red-100">(Deletes batch drivers/cabs)</span>
+                <span className="text-[11px] font-normal text-red-100">(Deletes batch drivers, cabs, or trips)</span>
               </button>
             </div>
 
@@ -617,30 +662,60 @@ export const UploadLogsList: React.FC = () => {
                 <ShieldAlert className="w-6 h-6" />
               </div>
               <div>
-                <h3 className="font-bold text-slate-900 text-lg">Clear All Driver & Cab Data</h3>
-                <p className="text-xs text-slate-500">Prepare for fresh Excel sheet upload</p>
+                <h3 className="font-bold text-slate-900 text-lg">Clear Active Database Records</h3>
+                <p className="text-xs text-slate-500">Choose data category to wipe</p>
               </div>
             </div>
 
             <p className="text-xs text-slate-600 leading-relaxed">
-              Are you sure you want to delete <span className="font-bold text-slate-900">ALL active driver and cab records</span> in the database? This allows you to upload a completely new data sheet. The Expiry Engine will analyze only the newly uploaded dataset.
+              Select which dataset you wish to wipe from the database to upload fresh sheets:
             </p>
 
-            <div className="pt-2 flex items-center justify-end gap-3">
+            <div className="space-y-2">
+              <button
+                onClick={() => handleWipeAllData('master')}
+                disabled={isDeleting}
+                className="w-full bg-amber-50 hover:bg-amber-100 text-amber-900 font-bold text-xs py-3 px-4 rounded-xl border border-amber-200 transition-colors cursor-pointer flex items-center justify-between text-left"
+              >
+                <div>
+                  <p className="font-bold">Wipe Vehicles & Drivers Data</p>
+                  <p className="text-[10px] font-normal text-amber-800/80">Clears `drivers` and `cabs` collections</p>
+                </div>
+                <Truck className="w-4 h-4 text-amber-700 shrink-0" />
+              </button>
+
+              <button
+                onClick={() => handleWipeAllData('trips')}
+                disabled={isDeleting}
+                className="w-full bg-purple-50 hover:bg-purple-100 text-purple-900 font-bold text-xs py-3 px-4 rounded-xl border border-purple-200 transition-colors cursor-pointer flex items-center justify-between text-left"
+              >
+                <div>
+                  <p className="font-bold">Wipe BA Trip Data</p>
+                  <p className="text-[10px] font-normal text-purple-800/80">Clears `trips` collection</p>
+                </div>
+                <Car className="w-4 h-4 text-purple-700 shrink-0" />
+              </button>
+
+              <button
+                onClick={() => handleWipeAllData('all')}
+                disabled={isDeleting}
+                className="w-full bg-red-600 hover:bg-red-700 text-white font-bold text-xs py-3 px-4 rounded-xl transition-colors cursor-pointer flex items-center justify-between text-left shadow-2xs"
+              >
+                <div>
+                  <p className="font-bold">Wipe ALL Database Records</p>
+                  <p className="text-[10px] font-normal text-red-100">Clears drivers, cabs, and trips completely</p>
+                </div>
+                <Trash2 className="w-4 h-4 text-white shrink-0" />
+              </button>
+            </div>
+
+            <div className="pt-2 flex items-center justify-end">
               <button
                 onClick={() => setShowWipeDataModal(false)}
                 disabled={isDeleting}
                 className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:bg-slate-100 transition-colors cursor-pointer"
               >
                 Cancel
-              </button>
-              <button
-                onClick={handleWipeAllData}
-                disabled={isDeleting}
-                className="inline-flex items-center gap-1.5 bg-red-600 hover:bg-red-700 text-white font-bold text-xs px-4 py-2.5 rounded-xl shadow-2xs transition-colors cursor-pointer"
-              >
-                {isDeleting ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Trash2 className="w-4 h-4" />}
-                <span>Wipe Database Data</span>
               </button>
             </div>
           </div>

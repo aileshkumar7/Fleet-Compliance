@@ -11,6 +11,7 @@ import { db } from '../lib/firebase';
 import { Cab, Driver, Client, Trip } from '../types';
 import { analyzeCabExpiry, analyzeDriverExpiry, getDocumentStatus } from './expiryEngine';
 import { getDriverCabNumber } from './cabDriverUtils';
+import { normalizeRegistration } from './registrationUtils';
 
 export interface ReportFilterOptions {
   clientFilter: string; // 'all' or clientId
@@ -618,14 +619,65 @@ export async function exportRecordPdfReport(
  */
 function parseTripDateHelper(val: any): Date | null {
   if (!val) return null;
+  let d: Date | null = null;
   if (val?.toDate && typeof val.toDate === 'function') {
-    return val.toDate();
+    d = val.toDate();
+  } else if (val instanceof Date) {
+    d = val;
+  } else if (typeof val === 'string') {
+    const trimmed = val.trim();
+    if (!trimmed) return null;
+    const MONTH_MAP: Record<string, number> = {
+      jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3,
+      may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8,
+      oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
+    };
+    const ddMmmYyyy = trimmed.match(/^(\d{1,2})[\/\-\.\s]+([A-Za-z]{3,9})[\/\-\.\s]+(\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (ddMmmYyyy) {
+      const day = parseInt(ddMmmYyyy[1], 10);
+      const mStr = ddMmmYyyy[2].toLowerCase();
+      const yrRaw = parseInt(ddMmmYyyy[3], 10);
+      const year = yrRaw < 100 ? 2000 + yrRaw : yrRaw;
+      const month = MONTH_MAP[mStr];
+      if (month !== undefined) {
+        const hrs = ddMmmYyyy[4] ? parseInt(ddMmmYyyy[4], 10) : 0;
+        const mins = ddMmmYyyy[5] ? parseInt(ddMmmYyyy[5], 10) : 0;
+        const secs = ddMmmYyyy[6] ? parseInt(ddMmmYyyy[6], 10) : 0;
+        return new Date(year, month, day, hrs, mins, secs);
+      }
+    }
+    const ddmmyyyy = trimmed.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    if (ddmmyyyy) {
+      const day = parseInt(ddmmyyyy[1], 10);
+      const month = parseInt(ddmmyyyy[2], 10) - 1;
+      const year = parseInt(ddmmyyyy[3], 10);
+      const hrs = ddmmyyyy[4] ? parseInt(ddmmyyyy[4], 10) : 0;
+      const mins = ddmmyyyy[5] ? parseInt(ddmmyyyy[5], 10) : 0;
+      const secs = ddmmyyyy[6] ? parseInt(ddmmyyyy[6], 10) : 0;
+      return new Date(year, month, day, hrs, mins, secs);
+    }
+    const yyyymmdd = trimmed.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:\s+|T)?(\d{1,2})?:?(\d{2})?:?(\d{2})?/);
+    if (yyyymmdd) {
+      const year = parseInt(yyyymmdd[1], 10);
+      const month = parseInt(yyyymmdd[2], 10) - 1;
+      const day = parseInt(yyyymmdd[3], 10);
+      const hrs = yyyymmdd[4] ? parseInt(yyyymmdd[4], 10) : 0;
+      const mins = yyyymmdd[5] ? parseInt(yyyymmdd[5], 10) : 0;
+      const secs = yyyymmdd[6] ? parseInt(yyyymmdd[6], 10) : 0;
+      return new Date(year, month, day, hrs, mins, secs);
+    }
+    d = new Date(trimmed);
+  } else if (typeof val === 'number') {
+    d = new Date(val);
   }
-  if (val instanceof Date) {
-    return isNaN(val.getTime()) ? null : val;
+
+  if (!d || isNaN(d.getTime())) return null;
+
+  if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0) {
+    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0);
   }
-  const d = new Date(val);
-  return isNaN(d.getTime()) ? null : d;
+
+  return d;
 }
 
 /**
@@ -745,12 +797,14 @@ export async function exportTripSummaryReport(
     };
   } = {};
 
-  const cleanTarget = targetCabReg ? targetCabReg.trim().toUpperCase() : null;
+  const targetNorm = targetCabReg ? normalizeRegistration(targetCabReg) : null;
 
   trips.forEach((t) => {
-    const reg = (t.registration || '').trim().toUpperCase();
-    if (!reg) return;
-    if (cleanTarget && reg !== cleanTarget) return;
+    const rawReg = t.registration;
+    if (!rawReg) return;
+    const norm = normalizeRegistration(rawReg);
+    if (!norm) return;
+    if (targetNorm && norm !== targetNorm) return;
 
     const tripId = t.tripId || t.id;
     if (!tripId) return;
@@ -759,9 +813,10 @@ export async function exportTripSummaryReport(
     if (!d) return;
 
     if (d.getTime() >= startDateCutoff.getTime() && d.getTime() <= endDateCutoff.getTime()) {
-      if (!cabMap[reg]) {
-        cabMap[reg] = {
-          registration: reg,
+      const displayReg = rawReg.trim().toUpperCase();
+      if (!cabMap[norm]) {
+        cabMap[norm] = {
+          registration: displayReg,
           vehicleType: t.vehicleType || 'Cab',
           tripSet: new Set<string>(),
           dayTripSets: {},
@@ -769,16 +824,16 @@ export async function exportTripSummaryReport(
         };
       }
 
-      cabMap[reg].tripSet.add(tripId);
+      cabMap[norm].tripSet.add(tripId);
 
       const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      if (!cabMap[reg].dayTripSets[dayKey]) {
-        cabMap[reg].dayTripSets[dayKey] = new Set<string>();
+      if (!cabMap[norm].dayTripSets[dayKey]) {
+        cabMap[norm].dayTripSets[dayKey] = new Set<string>();
       }
-      cabMap[reg].dayTripSets[dayKey].add(tripId);
+      cabMap[norm].dayTripSets[dayKey].add(tripId);
 
-      if (!cabMap[reg].latestTripDate || d.getTime() > cabMap[reg].latestTripDate!.getTime()) {
-        cabMap[reg].latestTripDate = d;
+      if (!cabMap[norm].latestTripDate || d.getTime() > cabMap[norm].latestTripDate!.getTime()) {
+        cabMap[norm].latestTripDate = d;
       }
     }
   });
@@ -838,7 +893,7 @@ export async function exportTripSummaryReport(
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Trip Summary');
 
-  const fileName = getReportFileName('Summary', period, cleanTarget, specificDate);
+  const fileName = getReportFileName('Summary', period, targetCabReg, specificDate);
   XLSX.writeFile(wb, fileName);
 
   await logReportDownload(
@@ -847,7 +902,7 @@ export async function exportTripSummaryReport(
     fileName,
     {
       period: specificDate ? `Specific Date: ${specificDate}` : period,
-      cabFilter: cleanTarget || 'All Cabs',
+      cabFilter: targetCabReg || 'All Cabs',
       totalCabs: cabList.length,
       grandTotalTrips,
       specificDate: specificDate || null,
@@ -895,7 +950,7 @@ export async function exportTripDetailedReport(
         : new Date(currentYear, currentMonth, currentDate - 29, 0, 0, 0, 0);
   }
 
-  const cleanTarget = targetCabReg ? targetCabReg.trim().toUpperCase() : null;
+  const targetNorm = targetCabReg ? normalizeRegistration(targetCabReg) : null;
 
   // De-duplicate trips by Trip ID
   const matchedSet = new Set<string>();
@@ -905,8 +960,8 @@ export async function exportTripDetailedReport(
     const tripId = t.tripId || t.id;
     if (!tripId || matchedSet.has(tripId)) return;
 
-    const reg = (t.registration || '').trim().toUpperCase();
-    if (cleanTarget && reg !== cleanTarget) return;
+    const norm = normalizeRegistration(t.registration);
+    if (targetNorm && norm !== targetNorm) return;
 
     const d = parseTripDateHelper(t.date || t.deploymentTime);
     if (!d) return;
@@ -996,7 +1051,7 @@ export async function exportTripDetailedReport(
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Trip Detailed');
 
-  const fileName = getReportFileName('Detailed', period, cleanTarget, specificDate);
+  const fileName = getReportFileName('Detailed', period, targetCabReg, specificDate);
   XLSX.writeFile(wb, fileName);
 
   await logReportDownload(
@@ -1005,7 +1060,7 @@ export async function exportTripDetailedReport(
     fileName,
     {
       period: specificDate ? `Specific Date: ${specificDate}` : period,
-      cabFilter: cleanTarget || 'All Cabs',
+      cabFilter: targetCabReg || 'All Cabs',
       recordCount: detailedTrips.length,
       totalPassengers: totalPax,
       specificDate: specificDate || null,
