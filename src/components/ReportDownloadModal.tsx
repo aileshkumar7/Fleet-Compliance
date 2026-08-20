@@ -28,6 +28,7 @@ interface ReportDownloadModalProps {
   isOpen: boolean;
   onClose: () => void;
   defaultAlertFilter?: 'all' | 'expiring_soon' | 'expired' | 'all_alerts';
+  defaultStatusFilter?: 'all' | 'active' | 'inactive';
   defaultClientFilter?: string;
 }
 
@@ -35,6 +36,7 @@ export const ReportDownloadModal: React.FC<ReportDownloadModalProps> = ({
   isOpen,
   onClose,
   defaultAlertFilter = 'all',
+  defaultStatusFilter = 'all',
   defaultClientFilter = 'all'
 }) => {
   const { userProfile, isAdmin } = useAuth();
@@ -46,7 +48,7 @@ export const ReportDownloadModal: React.FC<ReportDownloadModalProps> = ({
 
   // Filters
   const [clientFilter, setClientFilter] = useState<string>(defaultClientFilter);
-  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>(defaultStatusFilter);
   const [alertStatusFilter, setAlertStatusFilter] = useState<'all' | 'expiring_soon' | 'expired' | 'all_alerts'>(defaultAlertFilter);
 
   const [isExporting, setIsExporting] = useState<boolean>(false);
@@ -54,8 +56,9 @@ export const ReportDownloadModal: React.FC<ReportDownloadModalProps> = ({
 
   useEffect(() => {
     setAlertStatusFilter(defaultAlertFilter);
+    setStatusFilter(defaultStatusFilter);
     setClientFilter(defaultClientFilter);
-  }, [defaultAlertFilter, defaultClientFilter]);
+  }, [defaultAlertFilter, defaultStatusFilter, defaultClientFilter]);
 
   useEffect(() => {
     if (!isOpen) return;

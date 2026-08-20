@@ -196,9 +196,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const activeDrivers = filteredDrivers.filter(d => (d.status || '').toLowerCase() === 'active');
   const inactiveDrivers = filteredDrivers.filter(d => (d.status || '').toLowerCase() === 'inactive');
 
-  // Compute document expiry alerts strictly respecting selected client filter
-  const cabAlertsCount = scopedCabs.map(analyzeCabExpiry).filter(a => a.hasAlert).length;
-  const driverAlertsCount = scopedDrivers.map(analyzeDriverExpiry).filter(a => a.hasAlert).length;
+  // Compute document expiry alerts strictly for ACTIVE cabs and ACTIVE drivers
+  const cabAlertsCount = scopedCabs
+    .filter(c => (c.status || '').toLowerCase() === 'active')
+    .map(analyzeCabExpiry)
+    .filter(a => a.hasAlert).length;
+    
+  const driverAlertsCount = scopedDrivers
+    .filter(d => (d.status || '').toLowerCase() === 'active')
+    .map(analyzeDriverExpiry)
+    .filter(a => a.hasAlert).length;
+    
   const totalAlertsCount = cabAlertsCount + driverAlertsCount;
 
   // Calculate days since last Excel upload for weekly reminder
@@ -457,13 +465,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="text-2xl font-black text-rose-900 tracking-tight font-mono">{driverAlertsCount}</div>
             <p className="text-[10px] text-rose-700 font-semibold flex items-center gap-1 mt-0.5">
               <AlertCircle className="w-3 h-3 text-rose-600" />
-              <span>Doc Check</span>
+              <span>Active Doc Check</span>
             </p>
           </div>
           <div className="w-full bg-rose-200/60 h-1 rounded-full overflow-hidden">
             <div 
               className="bg-rose-600 h-full rounded-full transition-all duration-500" 
-              style={{ width: `${totalDriversCount ? Math.round((driverAlertsCount / totalDriversCount) * 100) : 0}%` }}
+              style={{ width: `${activeDriversCount ? Math.round((driverAlertsCount / activeDriversCount) * 100) : 0}%` }}
             ></div>
           </div>
         </div>
@@ -548,13 +556,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
             <div className="text-2xl font-black text-rose-900 tracking-tight font-mono">{cabAlertsCount}</div>
             <p className="text-[10px] text-rose-700 font-semibold flex items-center gap-1 mt-0.5">
               <AlertCircle className="w-3 h-3 text-rose-600" />
-              <span>Doc Check</span>
+              <span>Active Doc Check</span>
             </p>
           </div>
           <div className="w-full bg-rose-200/60 h-1 rounded-full overflow-hidden">
             <div 
               className="bg-rose-600 h-full rounded-full transition-all duration-500" 
-              style={{ width: `${totalCabsCount ? Math.round((cabAlertsCount / totalCabsCount) * 100) : 0}%` }}
+              style={{ width: `${activeCabsCount ? Math.round((cabAlertsCount / activeCabsCount) * 100) : 0}%` }}
             ></div>
           </div>
         </div>

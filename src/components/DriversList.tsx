@@ -378,7 +378,7 @@ export const DriversList: React.FC = () => {
                           <span className="text-slate-400">Police: </span>
                           <span className="font-mono text-slate-700 font-medium">{d.policeVerificationExpiryDate || 'N/A'}</span>
                         </div>
-                        {audit.hasAlert && (
+                        {!isInactive && audit.hasAlert && (
                           <div className="mt-1 space-y-0.5">
                             {audit.alerts.map((al, idx) => (
                               <div key={idx} className="text-[10px] font-bold font-mono text-rose-700 flex items-center gap-1">

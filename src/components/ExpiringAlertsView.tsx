@@ -121,11 +121,16 @@ export const ExpiringAlertsView: React.FC = () => {
            (recordClientId || '').toLowerCase() === selectedClient.toLowerCase();
   };
 
-  // Scoped Cabs & Drivers
-  const scopedCabs = cabs.filter(c => matchClient(c.clientName, c.clientId));
-  const scopedDrivers = drivers.filter(d => matchClient(d.clientName, d.clientId));
+  // Scoped Cabs & Drivers - Strictly filter to ACTIVE Cabs and ACTIVE Drivers
+  const scopedCabs = cabs
+    .filter(c => (c.status || '').toLowerCase() === 'active')
+    .filter(c => matchClient(c.clientName, c.clientId));
+    
+  const scopedDrivers = drivers
+    .filter(d => (d.status || '').toLowerCase() === 'active')
+    .filter(d => matchClient(d.clientName, d.clientId));
 
-  // Analyze scoped cabs and drivers
+  // Analyze scoped active cabs and active drivers
   const cabAnalyses: EntityExpiryAnalysis<Cab>[] = scopedCabs
     .map(analyzeCabExpiry)
     .filter(a => a.hasAlert);
@@ -166,14 +171,14 @@ export const ExpiringAlertsView: React.FC = () => {
             <span>Document Expiry Alerts Engine</span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Real-time automated audit of cab compliance certificates & driver verification documents.
+            Real-time automated audit of active cab compliance certificates & active driver verification documents.
           </p>
         </div>
 
         {/* Stats Badges & Download Button */}
         <div className="flex flex-wrap items-center gap-3 shrink-0">
           <div className="bg-rose-50 border border-rose-200 px-4 py-2 rounded-xl text-center">
-            <span className="text-[10px] text-rose-700 uppercase font-bold tracking-wider block">Expired Docs</span>
+            <span className="text-[10px] text-rose-700 uppercase font-bold tracking-wider block">Expired (Active Fleet)</span>
             <span className="text-lg font-black text-rose-800 font-mono">{totalExpired}</span>
           </div>
           <div className="bg-amber-50 border border-amber-200 px-4 py-2 rounded-xl text-center">
@@ -289,10 +294,10 @@ export const ExpiringAlertsView: React.FC = () => {
                 <div className="flex items-center gap-3">
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                     <Truck className="w-5 h-5 text-rose-600" />
-                    <span>Cabs — Expiring/Expired Documents</span>
+                    <span>Active Cabs — Expiring/Expired Documents</span>
                   </h3>
                   <span className="bg-rose-100 text-rose-800 font-extrabold px-3 py-1 rounded-full text-xs border border-rose-200 shrink-0">
-                    {filteredCabAnalyses.length} Cabs Flagged
+                    {filteredCabAnalyses.length} Active Cabs Flagged
                   </span>
                 </div>
                 <span className="text-xs font-mono text-slate-500">Sorted by urgency (fewest days remaining first)</span>
@@ -301,8 +306,8 @@ export const ExpiringAlertsView: React.FC = () => {
               {filteredCabAnalyses.length === 0 ? (
                 <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400 text-xs space-y-2">
                   <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
-                  <p className="font-semibold text-slate-700">No cab document alerts found!</p>
-                  <p>All vehicles have valid insurance, pollution, permit, fitness, tax, and service dates.</p>
+                  <p className="font-semibold text-slate-700">No active cab document alerts found!</p>
+                  <p>All active vehicles have valid insurance, pollution, permit, fitness, tax, and service dates.</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -387,10 +392,10 @@ export const ExpiringAlertsView: React.FC = () => {
                 <div className="flex items-center gap-3">
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                     <Users className="w-5 h-5 text-rose-600" />
-                    <span>Drivers — Expiring/Expired Documents</span>
+                    <span>Active Drivers — Expiring/Expired Documents</span>
                   </h3>
                   <span className="bg-rose-100 text-rose-800 font-extrabold px-3 py-1 rounded-full text-xs border border-rose-200 shrink-0">
-                    {filteredDriverAnalyses.length} Drivers Flagged
+                    {filteredDriverAnalyses.length} Active Drivers Flagged
                   </span>
                 </div>
                 <span className="text-xs font-mono text-slate-500">Sorted by urgency (fewest days remaining first)</span>
@@ -405,8 +410,8 @@ export const ExpiringAlertsView: React.FC = () => {
               {filteredDriverAnalyses.length === 0 ? (
                 <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400 text-xs space-y-2">
                   <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
-                  <p className="font-semibold text-slate-700">No driver document alerts found!</p>
-                  <p>All drivers have valid licenses, BGV, police, medical, training, and eye test verifications.</p>
+                  <p className="font-semibold text-slate-700">No active driver document alerts found!</p>
+                  <p>All active drivers have valid licenses, BGV, police, medical, training, and eye test verifications.</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
@@ -501,6 +506,7 @@ export const ExpiringAlertsView: React.FC = () => {
         isOpen={showReportModal}
         onClose={() => setShowReportModal(false)}
         defaultAlertFilter="all_alerts"
+        defaultStatusFilter="active"
         defaultClientFilter={selectedClient}
       />
     </div>
