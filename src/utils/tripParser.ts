@@ -12,9 +12,27 @@ export interface TripUploadSummary {
   fileName: string;
   totalRowsRead: number;
   totalUniqueTrips: number;
+  duplicateRowsCollapsed: number;
   newlyAddedCount: number;
   updatedCount: number;
   uploadedAt: Date;
+}
+
+/**
+ * Trims and stringifies every Trip ID consistently to safeguard against
+ * Excel type discrepancies (e.g. numeric IDs vs string IDs vs trailing decimals).
+ */
+export function normalizeTripId(val: any): string {
+  if (val === null || val === undefined) return '';
+  let str = String(val).trim();
+  if (!str) return '';
+  // Remove non-printable zero-width characters and byte-order marks
+  str = str.replace(/[\u200B-\u200D\uFEFF]/g, '').trim();
+  // Strip trailing .0 if Excel read an integer as a floating point string (e.g. "987654.0")
+  if (/^\d+\.0+$/.test(str)) {
+    str = str.replace(/\.0+$/, '');
+  }
+  return str;
 }
 
 // Map normalized column headers to standard trip field keys
@@ -367,9 +385,12 @@ export async function parseAndUploadTripData(
     let rawTripId = '';
     for (const [colName, value] of Object.entries(row)) {
       const mappedKey = colKeyToTripKeyMap[colName];
-      if (mappedKey === 'tripId' && value !== undefined && value !== null && String(value).trim() !== '') {
-        rawTripId = String(value).trim();
-        break;
+      if (mappedKey === 'tripId' && value !== undefined && value !== null) {
+        const normalized = normalizeTripId(value);
+        if (normalized) {
+          rawTripId = normalized;
+          break;
+        }
       }
     }
 
@@ -378,9 +399,12 @@ export async function parseAndUploadTripData(
       for (const [colName, value] of Object.entries(row)) {
         const norm = normalizeHeader(colName);
         if (norm.includes('tripid') || norm.includes('tripno') || norm.includes('bookingid') || norm.includes('tripreference')) {
-          if (value !== undefined && value !== null && String(value).trim() !== '') {
-            rawTripId = String(value).trim();
-            break;
+          if (value !== undefined && value !== null) {
+            const normalized = normalizeTripId(value);
+            if (normalized) {
+              rawTripId = normalized;
+              break;
+            }
           }
         }
       }
@@ -400,9 +424,14 @@ export async function parseAndUploadTripData(
 
   const uniqueTripIds = Array.from(tripGroupsMap.keys());
   const totalUniqueTrips = uniqueTripIds.length;
+  const duplicateRowsCollapsed = Math.max(0, totalRawRowsRead - totalUniqueTrips);
 
   if (onProgress) {
-    onProgress(0, totalUniqueTrips, `Identified ${totalUniqueTrips} unique trips from ${totalRawRowsRead} raw passenger rows. Writing database records...`);
+    onProgress(
+      0,
+      totalUniqueTrips,
+      `Identified ${totalUniqueTrips} unique trips from ${totalRawRowsRead} raw rows (${duplicateRowsCollapsed} duplicate passenger rows collapsed). Writing database records...`
+    );
   }
 
   // 2. Check existing trip records in Firestore to compute newly added vs. updated
@@ -414,8 +443,11 @@ export async function parseAndUploadTripData(
   const processedTripsToSave: { tripId: string; data: Trip }[] = [];
 
   for (let i = 0; i < uniqueTripIds.length; i++) {
-    const tripId = uniqueTripIds[i];
-    const rows = tripGroupsMap.get(tripId)!;
+    const rawId = uniqueTripIds[i];
+    const tripId = normalizeTripId(rawId);
+    if (!tripId) continue;
+
+    const rows = tripGroupsMap.get(rawId)!;
     const firstRow = rows[0];
 
     // Map fields from firstRow
@@ -504,12 +536,13 @@ export async function parseAndUploadTripData(
     const batch = writeBatch(db);
 
     for (const item of chunk) {
-      const tripRef = doc(db, 'trips', item.tripId);
-      if (existingDocIdsSet.has(item.tripId)) {
+      const cleanTripDocId = normalizeTripId(item.tripId);
+      const tripRef = doc(db, 'trips', cleanTripDocId);
+      if (existingDocIdsSet.has(cleanTripDocId)) {
         updatedCount++;
         uploadChanges.push({
-          recordId: item.tripId,
-          identifier: `Trip #${item.tripId} (${item.data.registration || 'N/A'})`,
+          recordId: cleanTripDocId,
+          identifier: `Trip #${cleanTripDocId} (${item.data.registration || 'N/A'})`,
           type: 'trip',
           changeType: 'updated',
           details: `Trip details updated (Cab: ${item.data.registration || 'N/A'}, Driver: ${item.data.driverName || 'N/A'})`
@@ -517,8 +550,8 @@ export async function parseAndUploadTripData(
       } else {
         newlyAddedCount++;
         uploadChanges.push({
-          recordId: item.tripId,
-          identifier: `Trip #${item.tripId} (${item.data.registration || 'N/A'})`,
+          recordId: cleanTripDocId,
+          identifier: `Trip #${cleanTripDocId} (${item.data.registration || 'N/A'})`,
           type: 'trip',
           changeType: 'added',
           details: `New trip record uploaded (Cab: ${item.data.registration || 'N/A'}, Pax: ${item.data.passengerCount})`
@@ -528,7 +561,8 @@ export async function parseAndUploadTripData(
       // Convert JS Date objects for Firestore setDoc
       const payload = {
         ...item.data,
-        id: item.tripId,
+        tripId: cleanTripDocId,
+        id: cleanTripDocId,
       };
 
       batch.set(tripRef, payload, { merge: true });
@@ -562,6 +596,7 @@ export async function parseAndUploadTripData(
         cabsUpdated: 0,
         tripsAdded: newlyAddedCount,
         tripsUpdated: updatedCount,
+        duplicateRowsCollapsed,
         failedRowsCount: 0,
         totalRowsRead: totalRawRowsRead,
       },
@@ -575,6 +610,7 @@ export async function parseAndUploadTripData(
     fileName,
     totalRowsRead: totalRawRowsRead,
     totalUniqueTrips,
+    duplicateRowsCollapsed,
     newlyAddedCount,
     updatedCount,
     uploadedAt: new Date(),

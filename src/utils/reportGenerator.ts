@@ -9,7 +9,7 @@ import autoTable from 'jspdf-autotable';
 import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Cab, Driver, Client, Trip } from '../types';
-import { analyzeCabExpiry, analyzeDriverExpiry, getDocumentStatus } from './expiryEngine';
+import { analyzeCabExpiry, analyzeDriverExpiry, getDocumentStatus, isBgvExemptedByPoliceVerification } from './expiryEngine';
 import { getDriverCabNumber } from './cabDriverUtils';
 import { normalizeRegistration } from './registrationUtils';
 
@@ -339,7 +339,20 @@ export async function exportRecordExcelReport(
       { name: 'Medical Check', num: driver.medicalVerificationStatus, date: driver.medicalVerificationExpiryDate },
     ];
 
+    const bgvExempted = isBgvExemptedByPoliceVerification(driver);
+
     const docAuditRows = driverDocs.map(d => {
+      const isBgv = d.name.includes('BGV');
+      if (isBgv && bgvExempted) {
+        return {
+          'Document Name': d.name,
+          'Doc Ref / Status': d.num || 'N/A',
+          'Expiry Date': d.date || 'N/A',
+          'Audit Status': 'BYPASSED (PV ACTIVE)',
+          'Audit Details': 'Exempted by checklist rule: Police Verification Date and certificate are provided. BGV not considered.',
+        };
+      }
+
       const audit = getDocumentStatus(d.name, d.date);
       return {
         'Document Name': d.name,
@@ -559,7 +572,14 @@ export async function exportRecordPdfReport(
       { name: 'Medical Check', num: driver.medicalVerificationStatus, date: driver.medicalVerificationExpiryDate },
     ];
 
+    const bgvExempted = isBgvExemptedByPoliceVerification(driver);
+
     const docBody = driverDocs.map(d => {
+      const isBgv = d.name.includes('BGV');
+      if (isBgv && bgvExempted) {
+        return [d.name, d.num || 'N/A', d.date || 'N/A', 'BYPASSED', 'Exempted: PV Date & cert provided (BGV not considered)'];
+      }
+
       const audit = getDocumentStatus(d.name, d.date);
       let statusLabel = 'VALID';
       if (audit.status === 'expired') statusLabel = 'EXPIRED';
@@ -588,6 +608,8 @@ export async function exportRecordPdfReport(
             data.cell.styles.textColor = [225, 29, 72];
           } else if (data.cell.raw === 'EXPIRING SOON') {
             data.cell.styles.textColor = [217, 119, 6];
+          } else if (data.cell.raw === 'BYPASSED') {
+            data.cell.styles.textColor = [37, 99, 235]; // blue
           } else {
             data.cell.styles.textColor = [16, 185, 129];
           }
@@ -605,8 +627,9 @@ export async function exportRecordPdfReport(
     yPos += 8;
     doc.setFontSize(8);
     doc.setTextColor(100, 116, 139);
-    doc.text('This is a computer-generated compliance verification report from Fleet Management System.', 14, yPos);
-    doc.text(`Verified By System Admin: ${driver.approvedBy || downloadedBy}`, 14, yPos + 5);
+    doc.text('Checklist Checkpoint: If Police Verification Date is mentioned and certificate is uploaded, BGV Date and certificate are not considered.', 14, yPos);
+    doc.text('This is a computer-generated compliance verification report from Fleet Management System.', 14, yPos + 4.5);
+    doc.text(`Verified By System Admin: ${driver.approvedBy || downloadedBy}`, 14, yPos + 9);
 
     doc.save(fileName);
     await logReportDownload(downloadedBy, 'pdf_single', fileName, { type: 'driver', id: driver.driverId }, 1);
@@ -673,11 +696,22 @@ function parseTripDateHelper(val: any): Date | null {
 
   if (!d || isNaN(d.getTime())) return null;
 
+  // Handle SheetJS/Excel UTC midnight timestamps (00:00:00.000Z)
+  // Convert UTC components to local Date so .getDate() and .toLocaleDateString() match calendar day
   if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0) {
     return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0);
   }
 
   return d;
+}
+
+/**
+ * Returns epoch timestamp for the calendar date-only midnight representation.
+ */
+function getTripCalendarTimeHelper(val: any): number | null {
+  const d = parseTripDateHelper(val);
+  if (!d) return null;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
 }
 
 /**
@@ -711,7 +745,8 @@ function getReportFileName(
   type: 'Summary' | 'Detailed',
   period: '24h' | '7d' | '1m' | string,
   targetCabReg?: string | null,
-  specificDate?: string | null
+  specificDate?: string | null,
+  referenceDate?: Date | null
 ): string {
   if (specificDate) {
     if (targetCabReg) {
@@ -721,12 +756,32 @@ function getReportFileName(
     return `Trip_${type}_${specificDate}.xlsx`;
   }
   const periodStr = period === '24h' ? 'Last24Hours' : period === '7d' ? 'Last7Days' : 'Last1Month';
-  const todayStr = new Date().toISOString().split('T')[0];
+  const refDateObj = referenceDate || new Date();
+  const dateStr = `${refDateObj.getFullYear()}-${String(refDateObj.getMonth() + 1).padStart(2, '0')}-${String(refDateObj.getDate()).padStart(2, '0')}`;
   if (targetCabReg) {
     const cleanCab = targetCabReg.trim().toUpperCase().replace(/[^A-Z0-9]/g, '_');
-    return `Trip_${type}_${cleanCab}_${periodStr}_${todayStr}.xlsx`;
+    return `Trip_${type}_${cleanCab}_${periodStr}_${dateStr}.xlsx`;
   }
-  return `Trip_${type}_${periodStr}_${todayStr}.xlsx`;
+  return `Trip_${type}_${periodStr}_${dateStr}.xlsx`;
+}
+
+/**
+ * Finds the most recent trip date in the trips array as the default reference date
+ */
+function getMostRecentTripDate(trips: Trip[]): Date {
+  let latestMs = 0;
+  trips.forEach((t) => {
+    const d = parseTripDateHelper(t.date || t.deploymentTime);
+    if (d && d.getTime() > latestMs) {
+      latestMs = d.getTime();
+    }
+  });
+  if (latestMs > 0) {
+    const d = new Date(latestMs);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+  }
+  const now = new Date();
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
 }
 
 /**
@@ -737,10 +792,13 @@ export async function exportTripSummaryReport(
   period: '24h' | '7d' | '1m' | string,
   targetCabReg: string | null,
   downloadedBy: string,
-  specificDate?: string | null
+  specificDate?: string | null,
+  referenceDate?: Date | null
 ): Promise<{ fileName: string; recordCount: number }> {
   let startDateCutoff: Date;
   let endDateCutoff: Date;
+
+  const effectiveRefDate = referenceDate || getMostRecentTripDate(trips);
 
   if (specificDate) {
     const parts = specificDate.split('-');
@@ -750,20 +808,18 @@ export async function exportTripSummaryReport(
     startDateCutoff = new Date(y, m, d, 0, 0, 0, 0);
     endDateCutoff = new Date(y, m, d, 23, 59, 59, 999);
   } else {
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth();
-    const currentDate = now.getDate();
+    const refYear = effectiveRefDate.getFullYear();
+    const refMonth = effectiveRefDate.getMonth();
+    const refDay = effectiveRefDate.getDate();
 
-    const todayStart = new Date(currentYear, currentMonth, currentDate, 0, 0, 0, 0);
-    endDateCutoff = new Date(currentYear, currentMonth, currentDate, 23, 59, 59, 999);
+    endDateCutoff = new Date(refYear, refMonth, refDay, 23, 59, 59, 999);
 
     startDateCutoff =
       period === '24h'
-        ? todayStart
+        ? new Date(refYear, refMonth, refDay, 0, 0, 0, 0)
         : period === '7d'
-        ? new Date(currentYear, currentMonth, currentDate - 6, 0, 0, 0, 0)
-        : new Date(currentYear, currentMonth, currentDate - 29, 0, 0, 0, 0);
+        ? new Date(refYear, refMonth, refDay - 6, 0, 0, 0, 0)
+        : new Date(refYear, refMonth, refDay - 29, 0, 0, 0, 0);
   }
 
   // Generate array of calendar days for per-day breakdown
@@ -809,10 +865,13 @@ export async function exportTripSummaryReport(
     const tripId = t.tripId || t.id;
     if (!tripId) return;
 
-    const d = parseTripDateHelper(t.date || t.deploymentTime);
-    if (!d) return;
+    const tripCalendarTime = getTripCalendarTimeHelper(t.date || t.deploymentTime);
+    if (tripCalendarTime === null) return;
 
-    if (d.getTime() >= startDateCutoff.getTime() && d.getTime() <= endDateCutoff.getTime()) {
+    const startOnlyTime = new Date(startDateCutoff.getFullYear(), startDateCutoff.getMonth(), startDateCutoff.getDate(), 0, 0, 0, 0).getTime();
+    const endOnlyTime = new Date(endDateCutoff.getFullYear(), endDateCutoff.getMonth(), endDateCutoff.getDate(), 0, 0, 0, 0).getTime();
+
+    if (tripCalendarTime >= startOnlyTime && tripCalendarTime <= endOnlyTime) {
       const displayReg = rawReg.trim().toUpperCase();
       if (!cabMap[norm]) {
         cabMap[norm] = {
@@ -826,13 +885,16 @@ export async function exportTripSummaryReport(
 
       cabMap[norm].tripSet.add(tripId);
 
-      const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
-      if (!cabMap[norm].dayTripSets[dayKey]) {
-        cabMap[norm].dayTripSets[dayKey] = new Set<string>();
+      const d = parseTripDateHelper(t.date || t.deploymentTime);
+      const dayKey = d ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : '';
+      if (dayKey) {
+        if (!cabMap[norm].dayTripSets[dayKey]) {
+          cabMap[norm].dayTripSets[dayKey] = new Set<string>();
+        }
+        cabMap[norm].dayTripSets[dayKey].add(tripId);
       }
-      cabMap[norm].dayTripSets[dayKey].add(tripId);
 
-      if (!cabMap[norm].latestTripDate || d.getTime() > cabMap[norm].latestTripDate!.getTime()) {
+      if (d && (!cabMap[norm].latestTripDate || d.getTime() > cabMap[norm].latestTripDate!.getTime())) {
         cabMap[norm].latestTripDate = d;
       }
     }
@@ -893,7 +955,7 @@ export async function exportTripSummaryReport(
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Trip Summary');
 
-  const fileName = getReportFileName('Summary', period, targetCabReg, specificDate);
+  const fileName = getReportFileName('Summary', period, targetCabReg, specificDate, effectiveRefDate);
   XLSX.writeFile(wb, fileName);
 
   await logReportDownload(
@@ -921,10 +983,13 @@ export async function exportTripDetailedReport(
   period: '24h' | '7d' | '1m' | string,
   targetCabReg: string | null,
   downloadedBy: string,
-  specificDate?: string | null
+  specificDate?: string | null,
+  referenceDate?: Date | null
 ): Promise<{ fileName: string; recordCount: number }> {
   let startDateCutoff: Date;
   let endDateCutoff: Date;
+
+  const effectiveRefDate = referenceDate || getMostRecentTripDate(trips);
 
   if (specificDate) {
     const parts = specificDate.split('-');
@@ -934,20 +999,18 @@ export async function exportTripDetailedReport(
     startDateCutoff = new Date(y, m, d, 0, 0, 0, 0);
     endDateCutoff = new Date(y, m, d, 23, 59, 59, 999);
   } else {
-    const now = new Date();
-    const currentYear = now.getFullYear();
-    const currentMonth = now.getMonth();
-    const currentDate = now.getDate();
+    const refYear = effectiveRefDate.getFullYear();
+    const refMonth = effectiveRefDate.getMonth();
+    const refDay = effectiveRefDate.getDate();
 
-    const todayStart = new Date(currentYear, currentMonth, currentDate, 0, 0, 0, 0);
-    endDateCutoff = new Date(currentYear, currentMonth, currentDate, 23, 59, 59, 999);
+    endDateCutoff = new Date(refYear, refMonth, refDay, 23, 59, 59, 999);
 
     startDateCutoff =
       period === '24h'
-        ? todayStart
+        ? new Date(refYear, refMonth, refDay, 0, 0, 0, 0)
         : period === '7d'
-        ? new Date(currentYear, currentMonth, currentDate - 6, 0, 0, 0, 0)
-        : new Date(currentYear, currentMonth, currentDate - 29, 0, 0, 0, 0);
+        ? new Date(refYear, refMonth, refDay - 6, 0, 0, 0, 0)
+        : new Date(refYear, refMonth, refDay - 29, 0, 0, 0, 0);
   }
 
   const targetNorm = targetCabReg ? normalizeRegistration(targetCabReg) : null;
@@ -963,10 +1026,13 @@ export async function exportTripDetailedReport(
     const norm = normalizeRegistration(t.registration);
     if (targetNorm && norm !== targetNorm) return;
 
-    const d = parseTripDateHelper(t.date || t.deploymentTime);
-    if (!d) return;
+    const tripCalendarTime = getTripCalendarTimeHelper(t.date || t.deploymentTime);
+    if (tripCalendarTime === null) return;
 
-    if (d.getTime() >= startDateCutoff.getTime() && d.getTime() <= endDateCutoff.getTime()) {
+    const startOnlyTime = new Date(startDateCutoff.getFullYear(), startDateCutoff.getMonth(), startDateCutoff.getDate(), 0, 0, 0, 0).getTime();
+    const endOnlyTime = new Date(endDateCutoff.getFullYear(), endDateCutoff.getMonth(), endDateCutoff.getDate(), 0, 0, 0, 0).getTime();
+
+    if (tripCalendarTime >= startOnlyTime && tripCalendarTime <= endOnlyTime) {
       matchedSet.add(tripId);
       detailedTrips.push(t);
     }
@@ -1051,7 +1117,7 @@ export async function exportTripDetailedReport(
   const wb = XLSX.utils.book_new();
   XLSX.utils.book_append_sheet(wb, ws, 'Trip Detailed');
 
-  const fileName = getReportFileName('Detailed', period, targetCabReg, specificDate);
+  const fileName = getReportFileName('Detailed', period, targetCabReg, specificDate, effectiveRefDate);
   XLSX.writeFile(wb, fileName);
 
   await logReportDownload(
@@ -1070,3 +1136,662 @@ export async function exportTripDetailedReport(
 
   return { fileName, recordCount: detailedTrips.length };
 }
+
+/**
+ * Helper to get clean file names for Utilization Reports
+ */
+function getUtilizationReportFileName(
+  reportKind: 'Utilization_Summary' | 'Utilization_DateWise' | 'Not_Utilized_Cabs',
+  period: '24h' | '7d' | '1m' | string,
+  specificDate?: string | null
+): string {
+  let periodTag = '';
+  if (specificDate) {
+    periodTag = specificDate;
+  } else if (period === '24h') {
+    periodTag = '24Hours';
+  } else if (period === '7d') {
+    periodTag = 'Last7Days';
+  } else if (period === '1m') {
+    periodTag = 'Last1Month';
+  } else {
+    periodTag = String(period).replace(/[^A-Za-z0-9]/g, '');
+  }
+
+  const now = new Date();
+  const todayStr = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+  return `${reportKind}_${periodTag}_${todayStr}.xlsx`;
+}
+
+/**
+ * Helper to calculate period date cutoffs matching Trip Analytics on-screen calculation
+ */
+function calculatePeriodCutoffs(
+  trips: Trip[],
+  period: '24h' | '7d' | '1m' | string,
+  specificDate?: string | null,
+  referenceDate?: Date | null
+): { startDateCutoff: Date; endDateCutoff: Date; effectiveRefDate: Date; daysList: Date[] } {
+  const effectiveRefDate = referenceDate || getMostRecentTripDate(trips);
+  let startDateCutoff: Date;
+  let endDateCutoff: Date;
+  const daysList: Date[] = [];
+
+  if (specificDate) {
+    const parts = specificDate.split('-');
+    const y = parseInt(parts[0], 10);
+    const m = parseInt(parts[1], 10) - 1;
+    const d = parseInt(parts[2], 10);
+    startDateCutoff = new Date(y, m, d, 0, 0, 0, 0);
+    endDateCutoff = new Date(y, m, d, 23, 59, 59, 999);
+    daysList.push(new Date(y, m, d, 0, 0, 0, 0));
+  } else {
+    const refYear = effectiveRefDate.getFullYear();
+    const refMonth = effectiveRefDate.getMonth();
+    const refDay = effectiveRefDate.getDate();
+
+    endDateCutoff = new Date(refYear, refMonth, refDay, 23, 59, 59, 999);
+
+    if (period === '24h') {
+      startDateCutoff = new Date(refYear, refMonth, refDay, 0, 0, 0, 0);
+      daysList.push(new Date(refYear, refMonth, refDay, 0, 0, 0, 0));
+    } else if (period === '7d') {
+      startDateCutoff = new Date(refYear, refMonth, refDay - 6, 0, 0, 0, 0);
+      for (let i = 6; i >= 0; i--) {
+        daysList.push(new Date(refYear, refMonth, refDay - i, 0, 0, 0, 0));
+      }
+    } else {
+      // 1m (30 days)
+      startDateCutoff = new Date(refYear, refMonth, refDay - 29, 0, 0, 0, 0);
+      for (let i = 29; i >= 0; i--) {
+        daysList.push(new Date(refYear, refMonth, refDay - i, 0, 0, 0, 0));
+      }
+    }
+  }
+
+  return { startDateCutoff, endDateCutoff, effectiveRefDate, daysList };
+}
+
+/**
+ * 1. UTILIZATION SUMMARY REPORT (.xlsx)
+ * One row per active cab for the selected period with Total Trips, Total Boardings, Last Trip Date,
+ * and a final summary block with Total Active Cabs, Total Utilized, Total Not Utilized, Utilization %.
+ */
+export async function exportUtilizationSummaryReport(
+  cabs: Cab[],
+  trips: Trip[],
+  period: '24h' | '7d' | '1m' | string,
+  selectedClientFilter: string,
+  downloadedBy: string,
+  specificDate?: string | null,
+  referenceDate?: Date | null
+): Promise<{ fileName: string; recordCount: number }> {
+  const { startDateCutoff, endDateCutoff, effectiveRefDate } = calculatePeriodCutoffs(
+    trips,
+    period,
+    specificDate,
+    referenceDate
+  );
+
+  // 1. Filter active cabs by client filter
+  const activeCabs = cabs.filter((c) => {
+    const status = (c.status || 'active').trim().toLowerCase();
+    if (status !== 'active') return false;
+
+    if (selectedClientFilter && selectedClientFilter !== 'all') {
+      const cId = (c.clientId || '').trim().toLowerCase();
+      const cName = (c.clientName || '').trim().toLowerCase();
+      const sel = selectedClientFilter.trim().toLowerCase();
+      if (cId !== sel && cName !== sel) return false;
+    }
+    return true;
+  });
+
+  // 2. Build history latest trip date map across ALL trips for all cabs
+  const allHistoryLatestTripDateMap = new Map<string, Date>();
+  trips.forEach((t) => {
+    const rawReg = t.registration;
+    if (!rawReg) return;
+    const norm = normalizeRegistration(rawReg);
+    if (!norm) return;
+
+    const d = parseTripDateHelper(t.date || t.deploymentTime);
+    if (!d) return;
+
+    const prev = allHistoryLatestTripDateMap.get(norm);
+    if (!prev || d.getTime() > prev.getTime()) {
+      allHistoryLatestTripDateMap.set(norm, d);
+    }
+  });
+
+  // 3. Aggregate period trips & boardings per normalized cab
+  const periodStatsByNormMap = new Map<string, { tripSet: Set<string>; boardings: number; latestDate: Date | null }>();
+  trips.forEach((t) => {
+    if (selectedClientFilter && selectedClientFilter !== 'all') {
+      const cName = (t.clientId || t.clientName || '').trim().toLowerCase();
+      const sel = selectedClientFilter.trim().toLowerCase();
+      if (cName && cName !== sel) return;
+    }
+
+    const rawReg = t.registration;
+    if (!rawReg) return;
+    const norm = normalizeRegistration(rawReg);
+    if (!norm) return;
+
+    const tripId = t.tripId || t.id;
+    if (!tripId) return;
+
+    const tripCalendarTime = getTripCalendarTimeHelper(t.date || t.deploymentTime);
+    if (tripCalendarTime === null) return;
+
+    const startOnlyTime = new Date(startDateCutoff.getFullYear(), startDateCutoff.getMonth(), startDateCutoff.getDate(), 0, 0, 0, 0).getTime();
+    const endOnlyTime = new Date(endDateCutoff.getFullYear(), endDateCutoff.getMonth(), endDateCutoff.getDate(), 0, 0, 0, 0).getTime();
+
+    if (tripCalendarTime >= startOnlyTime && tripCalendarTime <= endOnlyTime) {
+      if (!periodStatsByNormMap.has(norm)) {
+        periodStatsByNormMap.set(norm, { tripSet: new Set<string>(), boardings: 0, latestDate: null });
+      }
+      const st = periodStatsByNormMap.get(norm)!;
+      if (!st.tripSet.has(tripId)) {
+        st.tripSet.add(tripId);
+        st.boardings += t.passengerCount || 1;
+      }
+      const d = parseTripDateHelper(t.date || t.deploymentTime);
+      if (d && (!st.latestDate || d.getTime() > st.latestDate.getTime())) {
+        st.latestDate = d;
+      }
+    }
+  });
+
+  // 4. Construct Data Rows for Active Cabs
+  let totalUtilized = 0;
+  let totalNotUtilized = 0;
+
+  const cabRows = activeCabs.map((cab) => {
+    const norm = normalizeRegistration(cab.registrationNumber);
+    const periodStat = norm ? periodStatsByNormMap.get(norm) : null;
+    const totalTrips = periodStat?.tripSet.size || 0;
+    const totalBoardings = periodStat?.boardings || 0;
+    const isUtilized = totalTrips > 0;
+
+    if (isUtilized) {
+      totalUtilized++;
+    } else {
+      totalNotUtilized++;
+    }
+
+    const historyLastDate = norm ? allHistoryLatestTripDateMap.get(norm) : null;
+    const lastTripDateStr = historyLastDate
+      ? historyLastDate.toLocaleDateString('en-GB', {
+          day: '2-digit',
+          month: 'short',
+          year: 'numeric',
+        }) +
+        ' ' +
+        historyLastDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' })
+      : 'No trips on record';
+
+    return {
+      registration: cab.registrationNumber || 'N/A',
+      vehicleType: cab.vehicleType || 'Standard',
+      client: cab.clientName || 'N/A',
+      status: isUtilized ? 'Utilized' : 'Not Utilized',
+      totalTrips,
+      totalBoardings,
+      lastTripDate: lastTripDateStr,
+      isUtilized,
+    };
+  });
+
+  // Sort by Utilized first, then highest trips, then Registration
+  cabRows.sort((a, b) => {
+    if (a.isUtilized !== b.isUtilized) {
+      return a.isUtilized ? -1 : 1;
+    }
+    if (a.totalTrips !== b.totalTrips) {
+      return b.totalTrips - a.totalTrips;
+    }
+    return a.registration.localeCompare(b.registration);
+  });
+
+  const headers = [
+    'Registration Number',
+    'Vehicle Type',
+    'Client',
+    'Utilization Status',
+    'Total Trips',
+    'Total Boardings',
+    'Last Trip Date',
+  ];
+
+  const dataRows = cabRows.map((r) => [
+    r.registration,
+    r.vehicleType,
+    r.client,
+    r.status,
+    r.totalTrips,
+    r.totalBoardings,
+    r.lastTripDate,
+  ]);
+
+  const totalActive = activeCabs.length;
+  const utilizationPct = totalActive > 0 ? ((totalUtilized / totalActive) * 100).toFixed(1) : '0.0';
+
+  // Final Summary Block
+  const summaryRows = [
+    ['', '', '', '', '', '', ''],
+    ['--- FLEET UTILIZATION SUMMARY ---', '', '', '', '', '', ''],
+    ['Total Active Cabs', totalActive, '', '', '', '', ''],
+    ['Total Utilized', totalUtilized, '', '', '', '', ''],
+    ['Total Not Utilized', totalNotUtilized, '', '', '', '', ''],
+    ['Utilization %', `${utilizationPct}%`, '', '', '', '', ''],
+    ['Evaluation Scope', specificDate ? `Date: ${specificDate}` : period === '24h' ? '24 Hours' : period === '7d' ? 'Last 7 Days' : 'Last 1 Month', '', '', '', '', ''],
+    ['Reference Anchor Date', effectiveRefDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }), '', '', '', '', ''],
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows, ...summaryRows]);
+
+  // Autofit column widths
+  const max_widths = headers.map((h, i) => {
+    let max = String(h).length;
+    dataRows.forEach((row) => {
+      const val = row[i] !== undefined ? String(row[i]) : '';
+      if (val.length > max) max = val.length;
+    });
+    return { wch: Math.max(max + 4, 14) };
+  });
+  ws['!cols'] = max_widths;
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Utilization Summary');
+
+  const fileName = getUtilizationReportFileName('Utilization_Summary', period, specificDate);
+  XLSX.writeFile(wb, fileName);
+
+  await logReportDownload(
+    downloadedBy,
+    'utilization_summary',
+    fileName,
+    {
+      period: specificDate ? `Specific Date: ${specificDate}` : period,
+      totalActiveCabs: totalActive,
+      utilizedCabs: totalUtilized,
+      notUtilizedCabs: totalNotUtilized,
+      utilizationPct: `${utilizationPct}%`,
+      clientFilter: selectedClientFilter || 'all',
+    },
+    totalActive
+  );
+
+  return { fileName, recordCount: totalActive };
+}
+
+/**
+ * 2. UTILIZATION DATE-WISE REPORT (.xlsx)
+ * One row per cab per calendar day within the selected period (e.g. 7 rows per cab for 7-day period),
+ * with Date, Registration Number, Vehicle Type, Client, Trips That Day, Utilized That Day (Yes/No).
+ */
+export async function exportUtilizationDateWiseReport(
+  cabs: Cab[],
+  trips: Trip[],
+  period: '24h' | '7d' | '1m' | string,
+  selectedClientFilter: string,
+  downloadedBy: string,
+  specificDate?: string | null,
+  referenceDate?: Date | null
+): Promise<{ fileName: string; recordCount: number }> {
+  const { daysList, effectiveRefDate } = calculatePeriodCutoffs(
+    trips,
+    period,
+    specificDate,
+    referenceDate
+  );
+
+  // 1. Filter active cabs by client filter
+  const activeCabs = cabs.filter((c) => {
+    const status = (c.status || 'active').trim().toLowerCase();
+    if (status !== 'active') return false;
+
+    if (selectedClientFilter && selectedClientFilter !== 'all') {
+      const cId = (c.clientId || '').trim().toLowerCase();
+      const cName = (c.clientName || '').trim().toLowerCase();
+      const sel = selectedClientFilter.trim().toLowerCase();
+      if (cId !== sel && cName !== sel) return false;
+    }
+    return true;
+  });
+
+  // Sort cabs alphabetically by registration
+  activeCabs.sort((a, b) => (a.registrationNumber || '').localeCompare(b.registrationNumber || ''));
+
+  // 2. Map trips per calendar day key (YYYY-MM-DD) -> normalizedReg -> Set of TripIDs
+  const dayCabTripSets = new Map<string, Map<string, Set<string>>>();
+
+  trips.forEach((t) => {
+    if (selectedClientFilter && selectedClientFilter !== 'all') {
+      const cName = (t.clientId || t.clientName || '').trim().toLowerCase();
+      const sel = selectedClientFilter.trim().toLowerCase();
+      if (cName && cName !== sel) return;
+    }
+
+    const rawReg = t.registration;
+    if (!rawReg) return;
+    const norm = normalizeRegistration(rawReg);
+    if (!norm) return;
+
+    const tripId = t.tripId || t.id;
+    if (!tripId) return;
+
+    const d = parseTripDateHelper(t.date || t.deploymentTime);
+    if (!d) return;
+
+    const dayKey = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+    if (!dayCabTripSets.has(dayKey)) {
+      dayCabTripSets.set(dayKey, new Map<string, Set<string>>());
+    }
+    const cabMap = dayCabTripSets.get(dayKey)!;
+    if (!cabMap.has(norm)) {
+      cabMap.set(norm, new Set<string>());
+    }
+    cabMap.get(norm)!.add(tripId);
+  });
+
+  // 3. Build Date-Wise Rows (sorted chronologically by date, then by cab)
+  const headers = [
+    'Date',
+    'Registration Number',
+    'Vehicle Type',
+    'Client',
+    'Trips That Day',
+    'Utilized That Day',
+  ];
+
+  const dataRows: (string | number)[][] = [];
+  let totalCabDaysEvaluated = 0;
+  let totalUtilizedCabDays = 0;
+
+  daysList.forEach((dayObj) => {
+    const dayKey = `${dayObj.getFullYear()}-${String(dayObj.getMonth() + 1).padStart(2, '0')}-${String(dayObj.getDate()).padStart(2, '0')}`;
+    const dateFormatted = dayObj.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+
+    const cabMapForDay = dayCabTripSets.get(dayKey);
+
+    activeCabs.forEach((cab) => {
+      totalCabDaysEvaluated++;
+      const norm = normalizeRegistration(cab.registrationNumber);
+      const tripCount = norm && cabMapForDay?.has(norm) ? cabMapForDay.get(norm)!.size : 0;
+      const isUtilized = tripCount > 0;
+
+      if (isUtilized) {
+        totalUtilizedCabDays++;
+      }
+
+      dataRows.push([
+        dateFormatted,
+        cab.registrationNumber || 'N/A',
+        cab.vehicleType || 'Standard',
+        cab.clientName || 'N/A',
+        tripCount,
+        isUtilized ? 'Yes' : 'No',
+      ]);
+    });
+  });
+
+  const dateWiseUtilRate =
+    totalCabDaysEvaluated > 0
+      ? ((totalUtilizedCabDays / totalCabDaysEvaluated) * 100).toFixed(1)
+      : '0.0';
+
+  // Summary Block
+  const summaryRows = [
+    ['', '', '', '', '', ''],
+    ['--- DATE-WISE UTILIZATION SUMMARY ---', '', '', '', '', ''],
+    ['Total Days Evaluated', daysList.length, '', '', '', ''],
+    ['Total Active Cabs', activeCabs.length, '', '', '', ''],
+    ['Total Cab-Days Evaluated', totalCabDaysEvaluated, '', '', '', ''],
+    ['Total Utilized Cab-Days', totalUtilizedCabDays, '', '', '', ''],
+    ['Total Idle Cab-Days', totalCabDaysEvaluated - totalUtilizedCabDays, '', '', '', ''],
+    ['Daily Fleet Utilization Rate', `${dateWiseUtilRate}%`, '', '', '', ''],
+    ['Evaluation Scope', specificDate ? `Date: ${specificDate}` : period === '24h' ? '24 Hours' : period === '7d' ? 'Last 7 Days' : 'Last 1 Month', '', '', '', ''],
+    ['Reference Anchor Date', effectiveRefDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }), '', '', '', ''],
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows, ...summaryRows]);
+
+  // Autofit column widths
+  const max_widths = headers.map((h, i) => {
+    let max = String(h).length;
+    dataRows.slice(0, 500).forEach((row) => {
+      const val = row[i] !== undefined ? String(row[i]) : '';
+      if (val.length > max) max = val.length;
+    });
+    return { wch: Math.max(max + 4, 14) };
+  });
+  ws['!cols'] = max_widths;
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Date-Wise Utilization');
+
+  const fileName = getUtilizationReportFileName('Utilization_DateWise', period, specificDate);
+  XLSX.writeFile(wb, fileName);
+
+  await logReportDownload(
+    downloadedBy,
+    'utilization_date_wise',
+    fileName,
+    {
+      period: specificDate ? `Specific Date: ${specificDate}` : period,
+      totalDays: daysList.length,
+      totalActiveCabs: activeCabs.length,
+      totalCabDays: totalCabDaysEvaluated,
+      utilizedCabDays: totalUtilizedCabDays,
+      dateWiseUtilizationRate: `${dateWiseUtilRate}%`,
+      clientFilter: selectedClientFilter || 'all',
+    },
+    dataRows.length
+  );
+
+  return { fileName, recordCount: dataRows.length };
+}
+
+/**
+ * 3. NOT UTILIZED CABS REPORT (.xlsx)
+ * Cabs with ZERO trips in the selected period, sorted by longest idle first (highest days since last trip or no trips on record).
+ */
+export async function exportNotUtilizedCabsReport(
+  cabs: Cab[],
+  trips: Trip[],
+  period: '24h' | '7d' | '1m' | string,
+  selectedClientFilter: string,
+  downloadedBy: string,
+  specificDate?: string | null,
+  referenceDate?: Date | null
+): Promise<{ fileName: string; recordCount: number }> {
+  const { startDateCutoff, endDateCutoff, effectiveRefDate } = calculatePeriodCutoffs(
+    trips,
+    period,
+    specificDate,
+    referenceDate
+  );
+
+  // 1. Filter active cabs by client filter
+  const activeCabs = cabs.filter((c) => {
+    const status = (c.status || 'active').trim().toLowerCase();
+    if (status !== 'active') return false;
+
+    if (selectedClientFilter && selectedClientFilter !== 'all') {
+      const cId = (c.clientId || '').trim().toLowerCase();
+      const cName = (c.clientName || '').trim().toLowerCase();
+      const sel = selectedClientFilter.trim().toLowerCase();
+      if (cId !== sel && cName !== sel) return false;
+    }
+    return true;
+  });
+
+  // 2. Build history latest trip date map across ALL trips for all cabs
+  const allHistoryLatestTripDateMap = new Map<string, Date>();
+  trips.forEach((t) => {
+    const rawReg = t.registration;
+    if (!rawReg) return;
+    const norm = normalizeRegistration(rawReg);
+    if (!norm) return;
+
+    const d = parseTripDateHelper(t.date || t.deploymentTime);
+    if (!d) return;
+
+    const prev = allHistoryLatestTripDateMap.get(norm);
+    if (!prev || d.getTime() > prev.getTime()) {
+      allHistoryLatestTripDateMap.set(norm, d);
+    }
+  });
+
+  // 3. Find cabs that had trips in the active period
+  const utilizedNormsSet = new Set<string>();
+  trips.forEach((t) => {
+    if (selectedClientFilter && selectedClientFilter !== 'all') {
+      const cName = (t.clientId || t.clientName || '').trim().toLowerCase();
+      const sel = selectedClientFilter.trim().toLowerCase();
+      if (cName && cName !== sel) return;
+    }
+
+    const rawReg = t.registration;
+    if (!rawReg) return;
+    const norm = normalizeRegistration(rawReg);
+    if (!norm) return;
+
+    const tripId = t.tripId || t.id;
+    if (!tripId) return;
+
+    const tripCalendarTime = getTripCalendarTimeHelper(t.date || t.deploymentTime);
+    if (tripCalendarTime === null) return;
+
+    const startOnlyTime = new Date(startDateCutoff.getFullYear(), startDateCutoff.getMonth(), startDateCutoff.getDate(), 0, 0, 0, 0).getTime();
+    const endOnlyTime = new Date(endDateCutoff.getFullYear(), endDateCutoff.getMonth(), endDateCutoff.getDate(), 0, 0, 0, 0).getTime();
+
+    if (tripCalendarTime >= startOnlyTime && tripCalendarTime <= endOnlyTime) {
+      utilizedNormsSet.add(norm);
+    }
+  });
+
+  // 4. Filter only Not Utilized active cabs
+  const nowOrRef = effectiveRefDate || new Date();
+  const notUtilizedList = activeCabs
+    .filter((cab) => {
+      const norm = normalizeRegistration(cab.registrationNumber);
+      return !norm || !utilizedNormsSet.has(norm);
+    })
+    .map((cab) => {
+      const norm = normalizeRegistration(cab.registrationNumber);
+      const latestTripDate = norm ? allHistoryLatestTripDateMap.get(norm) : null;
+
+      let daysSinceLastTripNum = Infinity;
+      let daysSinceLastTripStr = 'No trips on record';
+      let lastTripDateStr = 'No trips on record';
+
+      if (latestTripDate) {
+        const diffMs = nowOrRef.getTime() - latestTripDate.getTime();
+        const diffDays = Math.max(0, Math.floor(diffMs / (1000 * 60 * 60 * 24)));
+        daysSinceLastTripNum = diffDays;
+        daysSinceLastTripStr = diffDays === 0 ? '0 days (Today)' : diffDays === 1 ? '1 day ago' : `${diffDays} days ago`;
+        lastTripDateStr =
+          latestTripDate.toLocaleDateString('en-GB', {
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+          }) +
+          ' ' +
+          latestTripDate.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
+      }
+
+      return {
+        registration: cab.registrationNumber || 'N/A',
+        vehicleType: cab.vehicleType || 'Standard',
+        client: cab.clientName || 'N/A',
+        daysSinceLastTripNum,
+        daysSinceLastTripStr,
+        lastTripDateStr,
+        latestTripDate,
+      };
+    });
+
+  // 5. Sort by longest idle first:
+  // Cabs with Infinity (no trips on record) at the very top, then descending days since last trip
+  notUtilizedList.sort((a, b) => {
+    if (a.daysSinceLastTripNum !== b.daysSinceLastTripNum) {
+      return b.daysSinceLastTripNum - a.daysSinceLastTripNum;
+    }
+    return a.registration.localeCompare(b.registration);
+  });
+
+  const headers = [
+    'Registration Number',
+    'Vehicle Type',
+    'Client',
+    'Days Since Last Trip',
+    'Last Trip Date',
+  ];
+
+  const dataRows = notUtilizedList.map((r) => [
+    r.registration,
+    r.vehicleType,
+    r.client,
+    r.daysSinceLastTripStr,
+    r.lastTripDateStr,
+  ]);
+
+  const totalActive = activeCabs.length;
+  const notUtilizedCount = notUtilizedList.length;
+  const unutilizedPct = totalActive > 0 ? ((notUtilizedCount / totalActive) * 100).toFixed(1) : '0.0';
+
+  // Final Summary Block
+  const summaryRows = [
+    ['', '', '', '', ''],
+    ['--- UNUTILIZED FLEET AUDIT SUMMARY ---', '', '', '', ''],
+    ['Total Active Cabs Evaluated', totalActive, '', '', ''],
+    ['Total Cabs Not Utilized', notUtilizedCount, '', '', ''],
+    ['Unutilized Fleet Share (%)', `${unutilizedPct}%`, '', '', ''],
+    ['Evaluation Scope', specificDate ? `Date: ${specificDate}` : period === '24h' ? '24 Hours' : period === '7d' ? 'Last 7 Days' : 'Last 1 Month', '', '', ''],
+    ['Reference Anchor Date', effectiveRefDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }), '', '', ''],
+  ];
+
+  const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows, ...summaryRows]);
+
+  // Autofit column widths
+  const max_widths = headers.map((h, i) => {
+    let max = String(h).length;
+    dataRows.forEach((row) => {
+      const val = row[i] !== undefined ? String(row[i]) : '';
+      if (val.length > max) max = val.length;
+    });
+    return { wch: Math.max(max + 4, 15) };
+  });
+  ws['!cols'] = max_widths;
+
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Not Utilized Cabs');
+
+  const fileName = getUtilizationReportFileName('Not_Utilized_Cabs', period, specificDate);
+  XLSX.writeFile(wb, fileName);
+
+  await logReportDownload(
+    downloadedBy,
+    'not_utilized_cabs',
+    fileName,
+    {
+      period: specificDate ? `Specific Date: ${specificDate}` : period,
+      totalActiveCabs: totalActive,
+      notUtilizedCount,
+      unutilizedPct: `${unutilizedPct}%`,
+      clientFilter: selectedClientFilter || 'all',
+    },
+    notUtilizedCount
+  );
+
+  return { fileName, recordCount: notUtilizedCount };
+}
+

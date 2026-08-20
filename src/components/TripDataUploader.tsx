@@ -22,15 +22,25 @@ import {
   Building2,
   ListFilter,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  ShieldCheck,
+  CopyCheck,
+  Info,
+  BarChart3,
+  ChevronRight
 } from 'lucide-react';
 import { parseAndUploadTripData, TripUploadSummary } from '../utils/tripParser';
+import { runCabDeduplicationCleanup } from '../utils/cabDeduplicator';
 import { collection, onSnapshot, query, orderBy, limit, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Trip } from '../types';
 import { useAuth } from '../context/AuthContext';
 
-export const TripDataUploader: React.FC = () => {
+interface TripDataUploaderProps {
+  onNavigateToTripAnalytics?: () => void;
+}
+
+export const TripDataUploader: React.FC<TripDataUploaderProps> = ({ onNavigateToTripAnalytics }) => {
   const { userProfile } = useAuth();
   const [isDragging, setIsDragging] = useState<boolean>(false);
   const [isUploading, setIsUploading] = useState<boolean>(false);
@@ -38,6 +48,7 @@ export const TripDataUploader: React.FC = () => {
   const [progressPercent, setProgressPercent] = useState<number>(0);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSummary, setUploadSummary] = useState<TripUploadSummary | null>(null);
+  const [dedupeNotice, setDedupeNotice] = useState<string | null>(null);
   
   // Options
   const [clearExistingFirst, setClearExistingFirst] = useState<boolean>(false);
@@ -120,6 +131,16 @@ export const TripDataUploader: React.FC = () => {
       setProgressPercent(100);
       setProgressStatus('Trip upload completed successfully!');
       setUploadSummary(summary);
+
+      // Run automatic cab de-duplication after trip upload
+      try {
+        const dedupeRes = await runCabDeduplicationCleanup();
+        if (dedupeRes.duplicateDocsDeleted > 0) {
+          setDedupeNotice(`${dedupeRes.duplicateDocsDeleted} duplicate cab record${dedupeRes.duplicateDocsDeleted > 1 ? 's' : ''} merged automatically`);
+        }
+      } catch (dErr) {
+        console.warn('Auto cab deduplication on trip upload:', dErr);
+      }
     } catch (err: any) {
       console.error('Trip upload failed:', err);
       setUploadError(err.message || 'An unexpected error occurred while processing the trip Excel file.');
@@ -296,55 +317,135 @@ export const TripDataUploader: React.FC = () => {
 
         {/* Upload Summary Card */}
         {uploadSummary && (
-          <div className="bg-emerald-50/80 border border-emerald-200 rounded-2xl p-6 space-y-5 animate-fadeIn">
-            <div className="flex items-center justify-between border-b border-emerald-200/80 pb-3">
-              <div className="flex items-center gap-2.5">
-                <div className="w-8 h-8 bg-emerald-600 text-white rounded-xl flex items-center justify-center font-bold shadow-xs">
-                  <CheckCircle2 className="w-5 h-5" />
+          <div className="bg-emerald-50/80 border border-emerald-200 rounded-3xl p-6 sm:p-7 space-y-6 animate-fadeIn shadow-xs">
+            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-emerald-200/80 pb-4">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 bg-emerald-600 text-white rounded-2xl flex items-center justify-center font-bold shadow-xs">
+                  <CheckCircle2 className="w-6 h-6" />
                 </div>
                 <div>
-                  <h3 className="font-bold text-emerald-950 text-base">Trip Data Upload Summary</h3>
-                  <p className="text-xs text-emerald-700 font-mono">File: {uploadSummary.fileName}</p>
+                  <div className="flex items-center gap-2">
+                    <h3 className="font-black text-emerald-950 text-base sm:text-lg">Trip ID De-duplication & Upload Summary</h3>
+                    <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded-full border border-emerald-300">
+                      <ShieldCheck className="w-3 h-3 text-emerald-700" />
+                      Airtight Deduplication
+                    </span>
+                  </div>
+                  <p className="text-xs text-emerald-700 font-mono mt-0.5">Source File: {uploadSummary.fileName}</p>
                 </div>
               </div>
-              <span className="text-[11px] font-mono text-emerald-800 bg-emerald-100/80 px-2.5 py-1 rounded-full border border-emerald-300">
-                {uploadSummary.uploadedAt.toLocaleTimeString()}
+              <span className="text-[11px] font-mono text-emerald-800 bg-emerald-100/90 px-3 py-1 rounded-full border border-emerald-300 self-start sm:self-auto">
+                Completed at {uploadSummary.uploadedAt.toLocaleTimeString()}
               </span>
             </div>
 
-            {/* Stat Cards Grid */}
-            <div className="grid grid-cols-2 sm:grid-cols-4 gap-4">
-              <div className="bg-white p-4 rounded-xl border border-emerald-100 shadow-2xs">
-                <span className="text-xs font-semibold text-slate-500 block">Total Raw Rows</span>
-                <span className="text-2xl font-black text-slate-900 font-mono">{uploadSummary.totalRowsRead}</span>
-                <span className="text-[10px] text-slate-400 block mt-0.5">Passenger Rows Read</span>
+            {/* Stat Cards Grid - 5 Cards */}
+            <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-3.5">
+              {/* Total Raw Rows */}
+              <div className="bg-white p-4 rounded-2xl border border-emerald-100/80 shadow-2xs space-y-1">
+                <span className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">1. Raw Rows Read</span>
+                <span className="text-2xl sm:text-3xl font-black text-slate-900 font-mono block">{uploadSummary.totalRowsRead}</span>
+                <span className="text-[10px] text-slate-400 block font-medium">Passenger rows in sheet</span>
               </div>
 
-              <div className="bg-white p-4 rounded-xl border border-emerald-100 shadow-2xs">
-                <span className="text-xs font-semibold text-slate-500 block">Unique Trips</span>
-                <span className="text-2xl font-black text-blue-900 font-mono">{uploadSummary.totalUniqueTrips}</span>
-                <span className="text-[10px] text-blue-600 block mt-0.5">Distinct Trip IDs</span>
+              {/* Duplicate Rows Collapsed */}
+              <div className="bg-white p-4 rounded-2xl border border-purple-200/80 shadow-2xs space-y-1 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-12 h-12 bg-purple-50 rounded-bl-full pointer-events-none -mr-2 -mt-2" />
+                <span className="text-[11px] font-bold text-purple-700 uppercase tracking-wider block">2. Duplicates Collapsed</span>
+                <span className="text-2xl sm:text-3xl font-black text-purple-900 font-mono block">
+                  {uploadSummary.duplicateRowsCollapsed}
+                </span>
+                <span className="text-[10px] text-purple-600 block font-medium">
+                  {uploadSummary.duplicateRowsCollapsed > 0 ? 'Passenger rows merged' : 'Zero duplicates in sheet'}
+                </span>
               </div>
 
-              <div className="bg-white p-4 rounded-xl border border-emerald-100 shadow-2xs">
-                <span className="text-xs font-semibold text-emerald-700 block">Newly Added</span>
-                <span className="text-2xl font-black text-emerald-700 font-mono">+{uploadSummary.newlyAddedCount}</span>
-                <span className="text-[10px] text-emerald-600 block mt-0.5">New Firestore Documents</span>
+              {/* Unique Trips Written */}
+              <div className="bg-white p-4 rounded-2xl border border-blue-200/80 shadow-2xs space-y-1 relative overflow-hidden">
+                <div className="absolute top-0 right-0 w-12 h-12 bg-blue-50 rounded-bl-full pointer-events-none -mr-2 -mt-2" />
+                <span className="text-[11px] font-bold text-blue-700 uppercase tracking-wider block">3. Unique Trips Written</span>
+                <span className="text-2xl sm:text-3xl font-black text-blue-900 font-mono block">{uploadSummary.totalUniqueTrips}</span>
+                <span className="text-[10px] text-blue-600 block font-medium">Distinct Firestore docs</span>
               </div>
 
-              <div className="bg-white p-4 rounded-xl border border-emerald-100 shadow-2xs">
-                <span className="text-xs font-semibold text-amber-700 block">Updated / Overwritten</span>
-                <span className="text-2xl font-black text-amber-700 font-mono">{uploadSummary.updatedCount}</span>
-                <span className="text-[10px] text-amber-600 block mt-0.5">Existing Trips Updated</span>
+              {/* Newly Added */}
+              <div className="bg-white p-4 rounded-2xl border border-emerald-200/80 shadow-2xs space-y-1">
+                <span className="text-[11px] font-bold text-emerald-700 uppercase tracking-wider block">4. Newly Added</span>
+                <span className="text-2xl sm:text-3xl font-black text-emerald-700 font-mono block">+{uploadSummary.newlyAddedCount}</span>
+                <span className="text-[10px] text-emerald-600 block font-medium">New trip documents</span>
+              </div>
+
+              {/* Updated / Overwritten */}
+              <div className="bg-white p-4 rounded-2xl border border-amber-200/80 shadow-2xs space-y-1">
+                <span className="text-[11px] font-bold text-amber-700 uppercase tracking-wider block">5. Merged / Updated</span>
+                <span className="text-2xl sm:text-3xl font-black text-amber-700 font-mono block">{uploadSummary.updatedCount}</span>
+                <span className="text-[10px] text-amber-600 block font-medium">Existing trips refreshed</span>
               </div>
             </div>
 
-            <div className="flex items-center justify-between text-xs text-emerald-900 pt-1">
-              <span className="flex items-center gap-1.5 font-medium">
-                <Check className="w-4 h-4 text-emerald-600" />
-                All trips were keyed by Trip ID on Firestore. Duplicate uploads overwrite cleanly without duplicate trip counts.
-              </span>
+            {/* Deduplication Confirmation & Math Box */}
+            <div className="bg-white rounded-2xl border border-emerald-200/90 p-4 space-y-3 shadow-2xs">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 pb-2.5">
+                <div className="flex items-center gap-2 text-xs font-bold text-slate-800">
+                  <CopyCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                  <span>Deduplication Equation Breakdown:</span>
+                </div>
+                <div className="font-mono text-xs text-slate-700 font-bold bg-slate-50 px-3 py-1 rounded-lg border border-slate-200">
+                  <span className="text-slate-900">{uploadSummary.totalRowsRead} raw rows</span>
+                  <span className="text-slate-400 mx-1.5">−</span>
+                  <span className="text-purple-700">{uploadSummary.duplicateRowsCollapsed} collapsed</span>
+                  <span className="text-slate-400 mx-1.5">=</span>
+                  <span className="text-blue-700">{uploadSummary.totalUniqueTrips} unique trips</span>
+                </div>
+              </div>
+
+              <div className="flex items-start gap-2.5 text-xs text-slate-600 leading-relaxed">
+                <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                <div>
+                  <p className="font-bold text-slate-900 mb-0.5">Airtight Document Key Guarantee</p>
+                  <p className="text-[11px] text-slate-600">
+                    Every Trip ID was stringified, trimmed, and normalized before database persistence (safeguarding against mixed number vs. text cell formats in Excel). Each trip document is stored with its unique Trip ID as the primary Firestore document key (<code className="bg-slate-100 px-1 py-0.5 rounded text-blue-800 font-mono font-bold">trips/[tripId]</code>). Multiple passenger rows and re-uploads are automatically consolidated without duplicate trip counts.
+                  </p>
+                </div>
+              </div>
+
+              {/* Auto Deduplication Notification Banner */}
+              {dedupeNotice && (
+                <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 font-semibold flex items-center justify-center gap-2">
+                  <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
+                  <span>{dedupeNotice}</span>
+                </div>
+              )}
             </div>
+
+            {/* Post-Upload CTA: View & Download Utilization Reports */}
+            {onNavigateToTripAnalytics && (
+              <div className="bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg border border-blue-800/80 animate-in fade-in slide-in-from-bottom-2 duration-200">
+                <div className="flex items-center gap-3">
+                  <div className="p-3 bg-blue-500/20 text-blue-300 rounded-xl shrink-0">
+                    <BarChart3 className="w-6 h-6" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-white text-sm sm:text-base">
+                      Trip Analytics & Utilization Reports Ready
+                    </h4>
+                    <p className="text-xs text-blue-200 mt-0.5">
+                      View real-time fleet utilization analytics and export Summary, Date-Wise, or Not Utilized Excel (.xlsx) reports.
+                    </p>
+                  </div>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={onNavigateToTripAnalytics}
+                  className="bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-extrabold text-xs px-5 py-2.5 rounded-xl transition-all shadow-md flex items-center gap-2 cursor-pointer shrink-0 self-stretch sm:self-center"
+                >
+                  <FileSpreadsheet className="w-4 h-4" />
+                  <span>View & Download Utilization Reports</span>
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </div>
+            )}
           </div>
         )}
       </div>

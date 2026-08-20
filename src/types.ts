@@ -57,6 +57,7 @@ export interface Cab {
   id?: string;
   etsVehicleId: string;
   registrationNumber: string;
+  registrationNormalized?: string;
   clientName: string;
   vehicleType: string;
   overallComplianceStatus: string;
@@ -128,6 +129,7 @@ export interface UploadLog {
     cabsUpdated?: number;
     tripsAdded?: number;
     tripsUpdated?: number;
+    duplicateRowsCollapsed?: number;
     failedRowsCount?: number;
     totalRowsRead?: number;
   };
@@ -184,6 +186,7 @@ export interface Trip {
   office: string;
   costCenter: string;
   clientId: string;
+  clientName?: string;
   uploadedAt: Date | any;
   uploadBatchId?: string;
   uploadBatchFileName?: string;

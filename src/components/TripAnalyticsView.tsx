@@ -50,7 +50,7 @@ import { collection, onSnapshot, query } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Trip, Cab, Client } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { exportTripSummaryReport, exportTripDetailedReport } from '../utils/reportGenerator';
+import { exportTripSummaryReport, exportTripDetailedReport, exportUtilizationSummaryReport, exportUtilizationDateWiseReport, exportNotUtilizedCabsReport } from '../utils/reportGenerator';
 import { normalizeRegistration } from '../utils/registrationUtils';
 
 export type PeriodType = '24h' | '7d' | '1m';
@@ -127,6 +127,24 @@ function parseTripDate(val: any): Date | null {
 }
 
 /**
+ * Derives a calendar date-only JS Date (normalized to midnight 00:00:00.000)
+ * using exclusively the year, month, and day components, discarding time components.
+ */
+function getTripCalendarDate(val: any): Date | null {
+  const d = parseTripDate(val);
+  if (!d) return null;
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+}
+
+/**
+ * Returns epoch timestamp for the calendar date-only midnight representation.
+ */
+function getTripCalendarTime(val: any): number | null {
+  const cd = getTripCalendarDate(val);
+  return cd ? cd.getTime() : null;
+}
+
+/**
  * Formats time values (Date, Timestamp, or "HH:MM" string)
  */
 function formatTimeString(val: any): string {
@@ -178,6 +196,7 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
 
   // Report export state
   const [showExportMenu, setShowExportMenu] = useState<boolean>(false);
+  const [showUtilizationModal, setShowUtilizationModal] = useState<boolean>(false);
   const [isExporting, setIsExporting] = useState<boolean>(false);
   const [exportSuccessMsg, setExportSuccessMsg] = useState<string | null>(null);
 
@@ -190,7 +209,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
         selectedPeriod,
         targetCab,
         downloadedBy,
-        selectedSpecificDate
+        selectedSpecificDate,
+        referenceDateInfo.dateObj
       );
       setExportSuccessMsg(`Summary report downloaded: ${result.fileName} (${result.recordCount} cabs)`);
       setTimeout(() => setExportSuccessMsg(null), 6000);
@@ -210,12 +230,79 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
         selectedPeriod,
         targetCab,
         downloadedBy,
-        selectedSpecificDate
+        selectedSpecificDate,
+        referenceDateInfo.dateObj
       );
       setExportSuccessMsg(`Detailed report downloaded: ${result.fileName} (${result.recordCount} trips)`);
       setTimeout(() => setExportSuccessMsg(null), 6000);
     } catch (err) {
       console.error('Failed to export detailed report:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportUtilizationSummary = async () => {
+    try {
+      setIsExporting(true);
+      setShowUtilizationModal(false);
+      const result = await exportUtilizationSummaryReport(
+        cabs,
+        trips,
+        selectedPeriod,
+        selectedClientFilter,
+        downloadedBy,
+        selectedSpecificDate,
+        referenceDateInfo.dateObj
+      );
+      setExportSuccessMsg(`Utilization Summary Report downloaded: ${result.fileName} (${result.recordCount} active cabs evaluated)`);
+      setTimeout(() => setExportSuccessMsg(null), 6000);
+    } catch (err) {
+      console.error('Failed to export utilization summary report:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportUtilizationDateWise = async () => {
+    try {
+      setIsExporting(true);
+      setShowUtilizationModal(false);
+      const result = await exportUtilizationDateWiseReport(
+        cabs,
+        trips,
+        selectedPeriod,
+        selectedClientFilter,
+        downloadedBy,
+        selectedSpecificDate,
+        referenceDateInfo.dateObj
+      );
+      setExportSuccessMsg(`Utilization Date-Wise Report downloaded: ${result.fileName} (${result.recordCount} cab-day rows)`);
+      setTimeout(() => setExportSuccessMsg(null), 6000);
+    } catch (err) {
+      console.error('Failed to export date-wise utilization report:', err);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  const handleExportNotUtilizedCabs = async () => {
+    try {
+      setIsExporting(true);
+      setShowUtilizationModal(false);
+      const result = await exportNotUtilizedCabsReport(
+        cabs,
+        trips,
+        selectedPeriod,
+        selectedClientFilter,
+        downloadedBy,
+        selectedSpecificDate,
+        referenceDateInfo.dateObj
+      );
+      setExportSuccessMsg(`Not Utilized Cabs Report downloaded: ${result.fileName} (${result.recordCount} idle cabs)`);
+      setTimeout(() => setExportSuccessMsg(null), 6000);
+    } catch (err) {
+      console.error('Failed to export not utilized cabs report:', err);
     } finally {
       setIsExporting(false);
     }
@@ -279,20 +366,6 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
     };
   }, []);
 
-  // Compute local calendar day boundaries
-  const now = new Date();
-  const currentYear = now.getFullYear();
-  const currentMonth = now.getMonth();
-  const currentDate = now.getDate();
-
-  // Today's YYYY-MM-DD
-  const todayKey = useMemo(() => {
-    const y = currentYear;
-    const m = String(currentMonth + 1).padStart(2, '0');
-    const d = String(currentDate).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }, [currentYear, currentMonth, currentDate]);
-
   // Map and List of all available dates with trips in the database
   const availableTripDatesMap = useMemo(() => {
     const map = new Map<string, { dateKey: string; count: number; dateObj: Date }>();
@@ -307,7 +380,11 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       const key = `${y}-${m}-${day}`;
 
       if (!map.has(key)) {
-        map.set(key, { dateKey: key, count: 0, dateObj: d });
+        map.set(key, {
+          dateKey: key,
+          count: 0,
+          dateObj: new Date(y, d.getMonth(), d.getDate(), 0, 0, 0, 0),
+        });
       }
       map.get(key)!.count += 1;
     });
@@ -324,9 +401,76 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
     return list;
   }, [availableTripDatesMap]);
 
+  const latestUploadedDateItem = useMemo(() => {
+    return availableTripDatesList.length > 0 ? availableTripDatesList[0] : null;
+  }, [availableTripDatesList]);
+
   const availableDateSet = useMemo(() => {
     return new Set(availableTripDatesMap.keys());
   }, [availableTripDatesMap]);
+
+  // SINGLE SHARED REFERENCE DATE for the entire Trip Analytics page:
+  // Defined as the most recent calendar date that actually has trip records in Firestore.
+  // Fallback to today if no trips exist yet.
+  const referenceDateInfo = useMemo(() => {
+    if (availableTripDatesList.length > 0) {
+      const latestItem = availableTripDatesList[0];
+      const d = latestItem.dateObj;
+      const year = d.getFullYear();
+      const month = d.getMonth();
+      const day = d.getDate();
+      const dateKey = latestItem.dateKey;
+      const dateObj = new Date(year, month, day, 0, 0, 0, 0);
+      const formattedLabel = dateObj.toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      });
+      return {
+        year,
+        month,
+        day,
+        dateKey,
+        dateObj,
+        formattedLabel,
+        hasTrips: true,
+      };
+    }
+
+    const now = new Date();
+    const year = now.getFullYear();
+    const month = now.getMonth();
+    const day = now.getDate();
+    const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+    const dateObj = new Date(year, month, day, 0, 0, 0, 0);
+    const formattedLabel = dateObj.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+    return {
+      year,
+      month,
+      day,
+      dateKey,
+      dateObj,
+      formattedLabel,
+      hasTrips: false,
+    };
+  }, [availableTripDatesList]);
+
+  // Today's real YYYY-MM-DD for UI reference
+  const todayKey = useMemo(() => {
+    const now = new Date();
+    const y = now.getFullYear();
+    const m = String(now.getMonth() + 1).padStart(2, '0');
+    const d = String(now.getDate()).padStart(2, '0');
+    return `${y}-${m}-${d}`;
+  }, []);
+
+  const hasDataForToday = useMemo(() => {
+    return availableDateSet.has(todayKey);
+  }, [availableDateSet, todayKey]);
 
   // Specific Date Window object
   const specificDateWindow = useMemo(() => {
@@ -348,42 +492,55 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
     return { start, end, dateKey: selectedSpecificDate, dateObj: start, formattedLabel };
   }, [selectedSpecificDate]);
 
-  // 1. Today's full calendar day (00:00:00 to 23:59:59.999)
-  const todayStart = new Date(currentYear, currentMonth, currentDate, 0, 0, 0, 0);
-  const todayEnd = new Date(currentYear, currentMonth, currentDate, 23, 59, 59, 999);
+  // Standard Windows derived from the Single Reference Date:
+  // 1. 24 Hours: That single reference calendar date only (00:00:00.000 to 23:59:59.999)
+  const ref24hStart = useMemo(() => {
+    return new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day, 0, 0, 0, 0);
+  }, [referenceDateInfo]);
 
-  const latestUploadedDateItem = useMemo(() => {
-    return availableTripDatesList.length > 0 ? availableTripDatesList[0] : null;
-  }, [availableTripDatesList]);
+  const ref24hEnd = useMemo(() => {
+    return new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day, 23, 59, 59, 999);
+  }, [referenceDateInfo]);
 
-  const hasDataForToday = useMemo(() => {
-    return availableDateSet.has(todayKey);
-  }, [availableDateSet, todayKey]);
+  // 2. 7 Days: The 7 calendar days ending on that reference date (Reference date + preceding 6 days)
+  const ref7dStart = useMemo(() => {
+    return new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day - 6, 0, 0, 0, 0);
+  }, [referenceDateInfo]);
 
-  // Effective 24h start/end: If today has 0 trips in DB, anchor 24h scope to the latest uploaded trip date
-  const effective24hStart = useMemo(() => {
-    if (hasDataForToday) return todayStart;
-    if (latestUploadedDateItem) {
-      const d = latestUploadedDateItem.dateObj;
-      return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+  // 3. 1 Month: The 30 calendar days ending on that reference date (Reference date + preceding 29 days)
+  const ref1mStart = useMemo(() => {
+    return new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day - 29, 0, 0, 0, 0);
+  }, [referenceDateInfo]);
+
+  // Common end boundary for 24h, 7d, and 1m is the end of the reference date
+  const refPeriodEnd = ref24hEnd;
+
+  // Active Scope Cutoffs
+  const { activeStartCutoff, activeEndCutoff } = useMemo(() => {
+    if (specificDateWindow) {
+      return {
+        activeStartCutoff: specificDateWindow.start,
+        activeEndCutoff: specificDateWindow.end,
+      };
     }
-    return todayStart;
-  }, [hasDataForToday, todayStart, latestUploadedDateItem]);
-
-  const effective24hEnd = useMemo(() => {
-    if (hasDataForToday) return todayEnd;
-    if (latestUploadedDateItem) {
-      const d = latestUploadedDateItem.dateObj;
-      return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 23, 59, 59, 999);
+    if (selectedPeriod === '24h') {
+      return {
+        activeStartCutoff: ref24hStart,
+        activeEndCutoff: ref24hEnd,
+      };
     }
-    return todayEnd;
-  }, [hasDataForToday, todayEnd, latestUploadedDateItem]);
-
-  // 2. Last 7 full calendar days (Today + preceding 6 days)
-  const last7DaysStart = new Date(currentYear, currentMonth, currentDate - 6, 0, 0, 0, 0);
-
-  // 3. Last 1 Month (30 full calendar days: Today + preceding 29 days)
-  const last30DaysStart = new Date(currentYear, currentMonth, currentDate - 29, 0, 0, 0, 0);
+    if (selectedPeriod === '7d') {
+      return {
+        activeStartCutoff: ref7dStart,
+        activeEndCutoff: refPeriodEnd,
+      };
+    }
+    // 1m
+    return {
+      activeStartCutoff: ref1mStart,
+      activeEndCutoff: refPeriodEnd,
+    };
+  }, [specificDateWindow, selectedPeriod, ref24hStart, ref24hEnd, ref7dStart, ref1mStart, refPeriodEnd]);
 
   // User accessibility keys
   const userClientKeys = useMemo(() => {
@@ -452,21 +609,9 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
 
   // Map of Normalized Registration -> Stats (tripSet, boardings, latestTripDate) for ACTIVE TIME SCOPE
   const activeScopeCabStatsByNormMap = useMemo(() => {
-    const startDateCutoff = specificDateWindow
-      ? specificDateWindow.start
-      : selectedPeriod === '24h'
-      ? effective24hStart
-      : selectedPeriod === '7d'
-      ? last7DaysStart
-      : last30DaysStart;
-
-    const endDateCutoff = specificDateWindow
-      ? specificDateWindow.end
-      : selectedPeriod === '24h'
-      ? effective24hEnd
-      : todayEnd;
-
     const map = new Map<string, { tripSet: Set<string>; boardings: number; latestTripDate: Date | null }>();
+    const startOnlyTime = new Date(activeStartCutoff.getFullYear(), activeStartCutoff.getMonth(), activeStartCutoff.getDate(), 0, 0, 0, 0).getTime();
+    const endOnlyTime = new Date(activeEndCutoff.getFullYear(), activeEndCutoff.getMonth(), activeEndCutoff.getDate(), 0, 0, 0, 0).getTime();
 
     trips.forEach((t) => {
       if (selectedClientFilter !== 'all') {
@@ -487,8 +632,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       const d = parseTripDate(t.date || t.deploymentTime);
       if (!d) return;
 
-      const time = d.getTime();
-      if (time >= startDateCutoff.getTime() && time <= endDateCutoff.getTime()) {
+      const tripCalendarTime = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+      if (tripCalendarTime >= startOnlyTime && tripCalendarTime <= endOnlyTime) {
         if (!map.has(norm)) {
           map.set(norm, { tripSet: new Set<string>(), boardings: 0, latestTripDate: null });
         }
@@ -497,7 +642,7 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
           item.tripSet.add(tripId);
           item.boardings += (t.passengerCount || 1);
         }
-        if (!item.latestTripDate || time > item.latestTripDate.getTime()) {
+        if (!item.latestTripDate || d.getTime() > item.latestTripDate.getTime()) {
           item.latestTripDate = d;
         }
       }
@@ -506,14 +651,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
     return map;
   }, [
     trips,
-    specificDateWindow,
-    selectedPeriod,
-    effective24hStart,
-    effective24hEnd,
-    todayStart,
-    todayEnd,
-    last7DaysStart,
-    last30DaysStart,
+    activeStartCutoff,
+    activeEndCutoff,
     selectedClientFilter,
   ]);
 
@@ -645,9 +784,19 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
     return `Last trip: ${diffDays} days ago (${formattedDateStr})`;
   };
 
-  // Filter trips for summary counts
+  // Filter trips for summary counts using the single shared reference date
   const analyticsSummary = useMemo(() => {
     if (specificDateWindow) {
+      const specificDateOnlyTime = new Date(
+        specificDateWindow.start.getFullYear(),
+        specificDateWindow.start.getMonth(),
+        specificDateWindow.start.getDate(),
+        0,
+        0,
+        0,
+        0
+      ).getTime();
+
       const tripSet = new Set<string>();
       let totalPassengers = 0;
 
@@ -658,8 +807,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
         const d = parseTripDate(trip.date || trip.deploymentTime);
         if (!d) return;
 
-        const t = d.getTime();
-        if (t >= specificDateWindow.start.getTime() && t <= specificDateWindow.end.getTime()) {
+        const tripCalendarTime = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+        if (tripCalendarTime === specificDateOnlyTime) {
           if (!tripSet.has(tripId)) {
             tripSet.add(tripId);
             totalPassengers += trip.passengerCount || 1;
@@ -677,6 +826,11 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       };
     }
 
+    const ref24hOnlyTime = new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day, 0, 0, 0, 0).getTime();
+    const ref7dStartOnlyTime = new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day - 6, 0, 0, 0, 0).getTime();
+    const ref1mStartOnlyTime = new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day - 29, 0, 0, 0, 0).getTime();
+    const refPeriodEndOnlyTime = ref24hOnlyTime;
+
     const trips24hSet = new Set<string>();
     const trips7dSet = new Set<string>();
     const trips1mSet = new Set<string>();
@@ -692,27 +846,27 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       const d = parseTripDate(trip.date || trip.deploymentTime);
       if (!d) return;
 
-      const t = d.getTime();
+      const tripCalendarTime = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
       const pax = trip.passengerCount || 1;
 
-      // Check 24 Hours (Effective 24h window)
-      if (t >= effective24hStart.getTime() && t <= effective24hEnd.getTime()) {
+      // 24 Hours: Reference date only
+      if (tripCalendarTime === ref24hOnlyTime) {
         if (!trips24hSet.has(tripId)) {
           trips24hSet.add(tripId);
           totalPassengers24h += pax;
         }
       }
 
-      // Check Last 7 Days (7 full calendar days)
-      if (t >= last7DaysStart.getTime() && t <= todayEnd.getTime()) {
+      // Last 7 Days: 7 calendar days ending on reference date
+      if (tripCalendarTime >= ref7dStartOnlyTime && tripCalendarTime <= refPeriodEndOnlyTime) {
         if (!trips7dSet.has(tripId)) {
           trips7dSet.add(tripId);
           totalPassengers7d += pax;
         }
       }
 
-      // Check Last 1 Month (30 full calendar days)
-      if (t >= last30DaysStart.getTime() && t <= todayEnd.getTime()) {
+      // Last 1 Month: 30 calendar days ending on reference date
+      if (tripCalendarTime >= ref1mStartOnlyTime && tripCalendarTime <= refPeriodEndOnlyTime) {
         if (!trips1mSet.has(tripId)) {
           trips1mSet.add(tripId);
           totalPassengers1m += pax;
@@ -728,13 +882,14 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       pax7d: totalPassengers7d,
       pax1m: totalPassengers1m,
     };
-  }, [trips, specificDateWindow, todayStart, todayEnd, last7DaysStart, last30DaysStart]);
+  }, [trips, specificDateWindow, referenceDateInfo]);
 
   // Construct chart data depending on selectedPeriod or specificDateWindow
   const chartData = useMemo(() => {
     if (specificDateWindow || selectedPeriod === '24h') {
-      const windowStart = specificDateWindow ? specificDateWindow.start : effective24hStart;
-      const windowEnd = specificDateWindow ? specificDateWindow.end : effective24hEnd;
+      const targetDateOnlyTime = specificDateWindow
+        ? new Date(specificDateWindow.start.getFullYear(), specificDateWindow.start.getMonth(), specificDateWindow.start.getDate(), 0, 0, 0, 0).getTime()
+        : new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day, 0, 0, 0, 0).getTime();
 
       // Hourly breakdown (00:00 to 23:00)
       const hourBuckets: { [hour: number]: Set<string> } = {};
@@ -752,8 +907,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
         const d = parseTripDate(trip.deploymentTime || trip.date);
         if (!d) return;
 
-        const t = d.getTime();
-        if (t >= windowStart.getTime() && t <= windowEnd.getTime()) {
+        const tripCalendarTime = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+        if (tripCalendarTime === targetDateOnlyTime) {
           const hour = d.getHours();
           if (!hourBuckets[hour].has(tripId)) {
             hourBuckets[hour].add(tripId);
@@ -775,9 +930,9 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
     const numDays = selectedPeriod === '7d' ? 7 : 30;
     const dayBuckets: { [dayKey: string]: { tripSet: Set<string>; pax: number; dateObj: Date } } = {};
 
-    // Generate buckets for the last N calendar days
+    // Generate buckets for the N calendar days ending on the shared reference date
     for (let i = numDays - 1; i >= 0; i--) {
-      const dayObj = new Date(currentYear, currentMonth, currentDate - i, 0, 0, 0, 0);
+      const dayObj = new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day - i, 0, 0, 0, 0);
       const dayKey = `${dayObj.getFullYear()}-${(dayObj.getMonth() + 1)
         .toString()
         .padStart(2, '0')}-${dayObj.getDate().toString().padStart(2, '0')}`;
@@ -789,7 +944,10 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       };
     }
 
-    const startDateCutoff = selectedPeriod === '7d' ? last7DaysStart : last30DaysStart;
+    const startDateCutoffOnlyTime = selectedPeriod === '7d'
+      ? new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day - 6, 0, 0, 0, 0).getTime()
+      : new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day - 29, 0, 0, 0, 0).getTime();
+    const endDateCutoffOnlyTime = new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day, 0, 0, 0, 0).getTime();
 
     trips.forEach((trip) => {
       const tripId = trip.tripId || trip.id;
@@ -798,8 +956,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       const d = parseTripDate(trip.date || trip.deploymentTime);
       if (!d) return;
 
-      const t = d.getTime();
-      if (t >= startDateCutoff.getTime() && t <= todayEnd.getTime()) {
+      const tripCalendarTime = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+      if (tripCalendarTime >= startDateCutoffOnlyTime && tripCalendarTime <= endDateCutoffOnlyTime) {
         const dayKey = `${d.getFullYear()}-${(d.getMonth() + 1)
           .toString()
           .padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
@@ -826,20 +984,10 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
         passengersCount: item.pax,
       };
     });
-  }, [trips, selectedPeriod, specificDateWindow, todayStart, todayEnd, last7DaysStart, last30DaysStart, currentYear, currentMonth, currentDate]);
+  }, [trips, selectedPeriod, specificDateWindow, referenceDateInfo]);
 
   // Cab summary breakdown for the active period or specific date
   const cabBreakdownList = useMemo(() => {
-    const startDateCutoff = specificDateWindow
-      ? specificDateWindow.start
-      : selectedPeriod === '24h'
-      ? todayStart
-      : selectedPeriod === '7d'
-      ? last7DaysStart
-      : last30DaysStart;
-
-    const endDateCutoff = specificDateWindow ? specificDateWindow.end : todayEnd;
-
     const cabMap: {
       [normReg: string]: {
         registration: string;
@@ -850,6 +998,9 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
         vehicleType: string;
       };
     } = {};
+
+    const startOnlyTime = new Date(activeStartCutoff.getFullYear(), activeStartCutoff.getMonth(), activeStartCutoff.getDate(), 0, 0, 0, 0).getTime();
+    const endOnlyTime = new Date(activeEndCutoff.getFullYear(), activeEndCutoff.getMonth(), activeEndCutoff.getDate(), 0, 0, 0, 0).getTime();
 
     trips.forEach((t) => {
       const rawReg = t.registration;
@@ -864,7 +1015,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       const d = parseTripDate(t.date || t.deploymentTime);
       if (!d) return;
 
-      if (d.getTime() >= startDateCutoff.getTime() && d.getTime() <= endDateCutoff.getTime()) {
+      const tripCalendarTime = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+      if (tripCalendarTime >= startOnlyTime && tripCalendarTime <= endOnlyTime) {
         if (!cabMap[norm]) {
           cabMap[norm] = {
             registration: rawReg.trim().toUpperCase(),
@@ -892,7 +1044,7 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
     });
 
     return Object.values(cabMap).sort((a, b) => b.tripSet.size - a.tripSet.size);
-  }, [trips, specificDateWindow, selectedPeriod, todayStart, todayEnd, last7DaysStart, last30DaysStart]);
+  }, [trips, activeStartCutoff, activeEndCutoff]);
 
   // All distinct cab registrations across trips and cabs database
   const allDistinctRegistrations = useMemo(() => {
@@ -952,22 +1104,10 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
 
   // Filtered trips for the active period or specific date
   const activePeriodTrips = useMemo(() => {
-    const startDateCutoff = specificDateWindow
-      ? specificDateWindow.start
-      : selectedPeriod === '24h'
-      ? effective24hStart
-      : selectedPeriod === '7d'
-      ? last7DaysStart
-      : last30DaysStart;
-
-    const endDateCutoff = specificDateWindow
-      ? specificDateWindow.end
-      : selectedPeriod === '24h'
-      ? effective24hEnd
-      : todayEnd;
-
     const matchedSet = new Set<string>();
     const result: Trip[] = [];
+    const startOnlyTime = new Date(activeStartCutoff.getFullYear(), activeStartCutoff.getMonth(), activeStartCutoff.getDate(), 0, 0, 0, 0).getTime();
+    const endOnlyTime = new Date(activeEndCutoff.getFullYear(), activeEndCutoff.getMonth(), activeEndCutoff.getDate(), 0, 0, 0, 0).getTime();
 
     trips.forEach((t) => {
       const tripId = t.tripId || t.id;
@@ -976,7 +1116,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       const d = parseTripDate(t.date || t.deploymentTime);
       if (!d) return;
 
-      if (d.getTime() >= startDateCutoff.getTime() && d.getTime() <= endDateCutoff.getTime()) {
+      const tripCalendarTime = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+      if (tripCalendarTime >= startOnlyTime && tripCalendarTime <= endOnlyTime) {
         matchedSet.add(tripId);
 
         // Search query filtering
@@ -1001,29 +1142,17 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       const dbDate = parseTripDate(b.date || b.deploymentTime)?.getTime() || 0;
       return dbDate - da;
     });
-  }, [trips, specificDateWindow, selectedPeriod, searchQuery, effective24hStart, effective24hEnd, todayStart, todayEnd, last7DaysStart, last30DaysStart]);
+  }, [trips, activeStartCutoff, activeEndCutoff, searchQuery]);
 
   // Trips performed by the selected cab during the selected period or specific date
   const selectedCabTrips = useMemo(() => {
     if (!selectedCabReg) return [];
 
-    const startDateCutoff = specificDateWindow
-      ? specificDateWindow.start
-      : selectedPeriod === '24h'
-      ? effective24hStart
-      : selectedPeriod === '7d'
-      ? last7DaysStart
-      : last30DaysStart;
-
-    const endDateCutoff = specificDateWindow
-      ? specificDateWindow.end
-      : selectedPeriod === '24h'
-      ? effective24hEnd
-      : todayEnd;
-
     const targetNorm = normalizeRegistration(selectedCabReg);
     const matchedSet = new Set<string>();
     const list: Trip[] = [];
+    const startOnlyTime = new Date(activeStartCutoff.getFullYear(), activeStartCutoff.getMonth(), activeStartCutoff.getDate(), 0, 0, 0, 0).getTime();
+    const endOnlyTime = new Date(activeEndCutoff.getFullYear(), activeEndCutoff.getMonth(), activeEndCutoff.getDate(), 0, 0, 0, 0).getTime();
 
     trips.forEach((t) => {
       const norm = normalizeRegistration(t.registration);
@@ -1035,7 +1164,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       const d = parseTripDate(t.date || t.deploymentTime);
       if (!d) return;
 
-      if (d.getTime() >= startDateCutoff.getTime() && d.getTime() <= endDateCutoff.getTime()) {
+      const tripCalendarTime = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+      if (tripCalendarTime >= startOnlyTime && tripCalendarTime <= endOnlyTime) {
         matchedSet.add(tripId);
 
         if (cabSearchQuery.trim()) {
@@ -1060,7 +1190,7 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       const dbDate = parseTripDate(b.date || b.deploymentTime)?.getTime() || 0;
       return dbDate - da;
     });
-  }, [trips, selectedCabReg, specificDateWindow, selectedPeriod, cabSearchQuery, effective24hStart, effective24hEnd, todayStart, todayEnd, last7DaysStart, last30DaysStart]);
+  }, [trips, selectedCabReg, activeStartCutoff, activeEndCutoff, cabSearchQuery]);
 
   const selectedCabBoardings = useMemo(() => {
     return selectedCabTrips.reduce((sum, t) => sum + (t.passengerCount || 1), 0);
@@ -1080,20 +1210,18 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
   const activePeriodTitle = specificDateWindow
     ? `Specific Date (${specificDateWindow.formattedLabel})`
     : selectedPeriod === '24h'
-    ? (hasDataForToday
-        ? 'Today (Last 24 Hours: 00:00–23:59)'
-        : `Latest Uploaded Data (${latestUploadedDateItem?.dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) || '24 Hours'})`)
+    ? `Reference Date (${referenceDateInfo.formattedLabel})`
     : selectedPeriod === '7d'
-    ? 'Last 7 Calendar Days'
-    : 'Last 1 Month (30 Calendar Days)';
+    ? `Last 7 Calendar Days (Ending ${referenceDateInfo.formattedLabel})`
+    : `Last 1 Month (30 Days Ending ${referenceDateInfo.formattedLabel})`;
 
   const periodHeadlineText = specificDateWindow
     ? `date ${specificDateWindow.formattedLabel}`
     : selectedPeriod === '24h'
-    ? '24 hours'
+    ? `24 hours (${referenceDateInfo.formattedLabel})`
     : selectedPeriod === '7d'
-    ? '7 days'
-    : '1 month';
+    ? `7 days (ending ${referenceDateInfo.formattedLabel})`
+    : `1 month (ending ${referenceDateInfo.formattedLabel})`;
 
   const activeCabReg = useMemo(() => {
     if (selectedCabReg) return selectedCabReg;
@@ -1357,135 +1485,168 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
             )}
           </div>
 
-          {/* Download Report Button & Popover */}
-          <div className="relative">
+          <div className="flex items-center gap-2">
+            {/* Dedicated Download Utilization Report Button */}
             <button
               type="button"
-              onClick={() => setShowExportMenu(!showExportMenu)}
-              disabled={isExporting}
-              className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs px-4 py-2.5 rounded-2xl transition-all shadow-xs flex items-center gap-2 cursor-pointer border border-emerald-500"
+              onClick={() => setShowUtilizationModal(true)}
+              className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-4 py-2.5 rounded-2xl transition-all shadow-xs flex items-center gap-2 cursor-pointer border border-blue-500"
             >
-              <Download className="w-4 h-4" />
-              <span>{isExporting ? 'Generating...' : 'Download Report'}</span>
-              <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
+              <FileSpreadsheet className="w-4 h-4 text-blue-100" />
+              <span>Download Utilization Report</span>
             </button>
 
-            {/* EXPORT MENU DROPDOWN */}
-            {showExportMenu && (
-              <>
-                <div
-                  className="fixed inset-0 z-30"
-                  onClick={() => setShowExportMenu(false)}
-                />
-                <div className="absolute right-0 mt-2 w-80 bg-slate-900 text-white rounded-2xl shadow-2xl border border-slate-800 p-3.5 z-40 space-y-3 animate-in fade-in zoom-in-95 duration-150">
-                  <div className="flex items-center justify-between pb-2 border-b border-slate-800 px-1">
-                    <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
-                      <Download className="w-3.5 h-3.5 text-emerald-400" />
-                      <span>Export Reports ({periodHeadlineText})</span>
-                    </span>
+            {/* Trip Reports Export Button & Popover */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowExportMenu(!showExportMenu)}
+                disabled={isExporting}
+                className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs px-4 py-2.5 rounded-2xl transition-all shadow-xs flex items-center gap-2 cursor-pointer border border-slate-800"
+              >
+                <Download className="w-4 h-4 text-emerald-400" />
+                <span>{isExporting ? 'Generating...' : 'Trip Reports'}</span>
+                <ChevronDown className={`w-3.5 h-3.5 transition-transform ${showExportMenu ? 'rotate-180' : ''}`} />
+              </button>
+
+              {/* EXPORT MENU DROPDOWN */}
+              {showExportMenu && (
+                <>
+                  <div
+                    className="fixed inset-0 z-30"
+                    onClick={() => setShowExportMenu(false)}
+                  />
+                  <div className="absolute right-0 mt-2 w-80 bg-slate-900 text-white rounded-2xl shadow-2xl border border-slate-800 p-3.5 z-40 space-y-3 animate-in fade-in zoom-in-95 duration-150">
+                    <div className="flex items-center justify-between pb-2 border-b border-slate-800 px-1">
+                      <span className="text-xs font-bold text-slate-300 uppercase tracking-wider flex items-center gap-1.5">
+                        <Download className="w-3.5 h-3.5 text-emerald-400" />
+                        <span>Export Reports ({periodHeadlineText})</span>
+                      </span>
+                      <button
+                        onClick={() => setShowExportMenu(false)}
+                        className="text-slate-400 hover:text-white p-0.5 rounded-md cursor-pointer"
+                      >
+                        <X className="w-3.5 h-3.5" />
+                      </button>
+                    </div>
+
+                    {/* Quick Link to Utilization Reports */}
                     <button
-                      onClick={() => setShowExportMenu(false)}
-                      className="text-slate-400 hover:text-white p-0.5 rounded-md cursor-pointer"
+                      type="button"
+                      onClick={() => {
+                        setShowExportMenu(false);
+                        setShowUtilizationModal(true);
+                      }}
+                      className="w-full text-left bg-gradient-to-r from-blue-900 to-indigo-900 hover:from-blue-800 hover:to-indigo-800 border border-blue-700/80 p-3 rounded-xl transition-all cursor-pointer flex items-center justify-between"
                     >
-                      <X className="w-3.5 h-3.5" />
+                      <div className="flex items-center gap-2.5">
+                        <div className="p-1.5 bg-blue-500/30 text-blue-300 rounded-lg">
+                          <Car className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <span className="text-xs font-bold text-white block">Cab Utilization Reports</span>
+                          <span className="text-[10px] text-blue-200">Summary, Date-Wise & Not Utilized</span>
+                        </div>
+                      </div>
+                      <ChevronRight className="w-4 h-4 text-blue-300" />
                     </button>
-                  </div>
 
-                  {/* Active Filter Context */}
-                  {activeCabReg && (
-                    <div className="bg-blue-950/80 border border-blue-800/80 p-2.5 rounded-xl text-xs space-y-1">
-                      <div className="flex items-center justify-between text-blue-300 font-bold">
-                        <span>Active Filtered Cab:</span>
-                        <span className="font-mono text-white bg-blue-900 px-1.5 py-0.5 rounded">{activeCabReg}</span>
-                      </div>
-                      <p className="text-[11px] text-slate-400">
-                        Export specific data for <strong className="text-slate-200">{activeCabReg}</strong> or full fleet.
-                      </p>
-                    </div>
-                  )}
-
-                  {/* Option 1: SUMMARY REPORT */}
-                  <div className="bg-slate-800/80 hover:bg-slate-800 p-3 rounded-xl border border-slate-700/80 space-y-2">
-                    <div className="flex items-start gap-2.5">
-                      <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg shrink-0 mt-0.5">
-                        <FileSpreadsheet className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-bold text-white">Summary Report (.xlsx)</h4>
-                        <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">
-                          One row per cab with total trips, per-day breakdown columns, and grand totals row.
+                    {/* Active Filter Context */}
+                    {activeCabReg && (
+                      <div className="bg-blue-950/80 border border-blue-800/80 p-2.5 rounded-xl text-xs space-y-1">
+                        <div className="flex items-center justify-between text-blue-300 font-bold">
+                          <span>Active Filtered Cab:</span>
+                          <span className="font-mono text-white bg-blue-900 px-1.5 py-0.5 rounded">{activeCabReg}</span>
+                        </div>
+                        <p className="text-[11px] text-slate-400">
+                          Export specific data for <strong className="text-slate-200">{activeCabReg}</strong> or full fleet.
                         </p>
                       </div>
-                    </div>
+                    )}
 
-                    <div className="flex flex-col gap-1.5 pt-1">
-                      {activeCabReg && (
+                    {/* Option 1: SUMMARY REPORT */}
+                    <div className="bg-slate-800/80 hover:bg-slate-800 p-3 rounded-xl border border-slate-700/80 space-y-2">
+                      <div className="flex items-start gap-2.5">
+                        <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-lg shrink-0 mt-0.5">
+                          <FileSpreadsheet className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-white">Summary Report (.xlsx)</h4>
+                          <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                            One row per cab with total trips, per-day breakdown columns, and grand totals row.
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5 pt-1">
+                        {activeCabReg && (
+                          <button
+                            type="button"
+                            onClick={() => handleExportSummary(activeCabReg)}
+                            className="w-full text-left bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-between"
+                          >
+                            <span>Export {activeCabReg} Summary</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <button
                           type="button"
-                          onClick={() => handleExportSummary(activeCabReg)}
-                          className="w-full text-left bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-between"
+                          onClick={() => handleExportSummary(null)}
+                          className={`w-full text-left font-bold text-xs px-3 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-between ${
+                            activeCabReg
+                              ? 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                              : 'bg-emerald-600 hover:bg-emerald-500 text-white'
+                          }`}
                         >
-                          <span>Export {activeCabReg} Summary</span>
+                          <span>Export Full Fleet Summary ({cabBreakdownList.length} cabs)</span>
                           <ChevronRight className="w-3.5 h-3.5" />
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => handleExportSummary(null)}
-                        className={`w-full text-left font-bold text-xs px-3 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-between ${
-                          activeCabReg
-                            ? 'bg-slate-700 hover:bg-slate-600 text-slate-200'
-                            : 'bg-emerald-600 hover:bg-emerald-500 text-white'
-                        }`}
-                      >
-                        <span>Export Full Fleet Summary ({cabBreakdownList.length} cabs)</span>
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  {/* Option 2: DETAILED REPORT */}
-                  <div className="bg-slate-800/80 hover:bg-slate-800 p-3 rounded-xl border border-slate-700/80 space-y-2">
-                    <div className="flex items-start gap-2.5">
-                      <div className="p-2 bg-blue-500/20 text-blue-400 rounded-lg shrink-0 mt-0.5">
-                        <FileText className="w-4 h-4" />
-                      </div>
-                      <div>
-                        <h4 className="text-xs font-bold text-white">Detailed Report (.xlsx)</h4>
-                        <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">
-                          One row per individual trip (Trip ID, Driver, Pickup/Drop Times, Pax Count, Direction).
-                        </p>
                       </div>
                     </div>
 
-                    <div className="flex flex-col gap-1.5 pt-1">
-                      {activeCabReg && (
+                    {/* Option 2: DETAILED REPORT */}
+                    <div className="bg-slate-800/80 hover:bg-slate-800 p-3 rounded-xl border border-slate-700/80 space-y-2">
+                      <div className="flex items-start gap-2.5">
+                        <div className="p-2 bg-blue-500/20 text-blue-400 rounded-lg shrink-0 mt-0.5">
+                          <FileText className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-white">Detailed Report (.xlsx)</h4>
+                          <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                            One row per individual trip (Trip ID, Driver, Pickup/Drop Times, Pax Count, Direction).
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="flex flex-col gap-1.5 pt-1">
+                        {activeCabReg && (
+                          <button
+                            type="button"
+                            onClick={() => handleExportDetailed(activeCabReg)}
+                            className="w-full text-left bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-between"
+                          >
+                            <span>Export {activeCabReg} Trips</span>
+                            <ChevronRight className="w-3.5 h-3.5" />
+                          </button>
+                        )}
                         <button
                           type="button"
-                          onClick={() => handleExportDetailed(activeCabReg)}
-                          className="w-full text-left bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-3 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-between"
+                          onClick={() => handleExportDetailed(null)}
+                          className={`w-full text-left font-bold text-xs px-3 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-between ${
+                            activeCabReg
+                              ? 'bg-slate-700 hover:bg-slate-600 text-slate-200'
+                              : 'bg-blue-600 hover:bg-blue-500 text-white'
+                          }`}
                         >
-                          <span>Export {activeCabReg} Trips</span>
+                          <span>Export Full Fleet Detailed ({activePeriodTrips.length} trips)</span>
                           <ChevronRight className="w-3.5 h-3.5" />
                         </button>
-                      )}
-                      <button
-                        type="button"
-                        onClick={() => handleExportDetailed(null)}
-                        className={`w-full text-left font-bold text-xs px-3 py-2 rounded-lg transition-colors cursor-pointer flex items-center justify-between ${
-                          activeCabReg
-                            ? 'bg-slate-700 hover:bg-slate-600 text-slate-200'
-                            : 'bg-blue-600 hover:bg-blue-500 text-white'
-                        }`}
-                      >
-                        <span>Export Full Fleet Detailed ({activePeriodTrips.length} trips)</span>
-                        <ChevronRight className="w-3.5 h-3.5" />
-                      </button>
+                      </div>
                     </div>
                   </div>
-                </div>
-              </>
-            )}
+                </>
+              )}
+            </div>
           </div>
         </div>
       </div>
@@ -1669,9 +1830,7 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
           <div className="flex items-start justify-between gap-2">
             <div>
               <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
-                {hasDataForToday
-                  ? 'Trips — Last 24 Hours'
-                  : `Trips — Last 24 Hours (${latestUploadedDateItem ? latestUploadedDateItem.dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : 'Today'})`}
+                Trips — Last 24 Hours ({referenceDateInfo.formattedLabel})
               </span>
               <p className="text-3xl font-black text-slate-900 font-mono mt-1">
                 {analyticsSummary.count24h.toLocaleString()}
@@ -1684,9 +1843,7 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
 
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
             <span className="text-slate-500 font-medium">
-              {hasDataForToday
-                ? 'Rule: Today 00:00 – 23:59'
-                : `Latest Data: ${latestUploadedDateItem ? latestUploadedDateItem.dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : 'N/A'}`}
+              Reference Date: {referenceDateInfo.formattedLabel} (00:00–23:59)
             </span>
             <span className="font-bold text-blue-800 font-mono bg-blue-100/80 px-2 py-0.5 rounded-full">
               {analyticsSummary.pax24h} Pax
@@ -1721,7 +1878,9 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
           </div>
 
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-            <span className="text-slate-500 font-medium">Rule: 7 full calendar days</span>
+            <span className="text-slate-500 font-medium">
+              7 calendar days ending {referenceDateInfo.formattedLabel}
+            </span>
             <span className="font-bold text-emerald-800 font-mono bg-emerald-100/80 px-2 py-0.5 rounded-full">
               {analyticsSummary.pax7d} Pax
             </span>
@@ -1755,7 +1914,9 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
           </div>
 
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-            <span className="text-slate-500 font-medium">Rule: 30 full calendar days</span>
+            <span className="text-slate-500 font-medium">
+              30 calendar days ending {referenceDateInfo.formattedLabel}
+            </span>
             <span className="font-bold text-purple-800 font-mono bg-purple-100/80 px-2 py-0.5 rounded-full">
               {analyticsSummary.pax1m} Pax
             </span>
@@ -1782,18 +1943,30 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
             </p>
           </div>
 
-          {/* Utilization % Metric Banner */}
-          <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white px-5 py-3 rounded-2xl shadow-md flex items-center gap-4 self-start md:self-auto border border-slate-800 shrink-0">
-            <div>
-              <span className="text-[10px] uppercase font-bold tracking-wider text-blue-300 block">
-                Fleet Utilization Rate
-              </span>
-              <span className="text-2xl font-black font-mono text-emerald-400">
-                {cabUtilizationData.utilizationPct}%
-              </span>
-            </div>
-            <div className="w-12 h-12 rounded-full border-4 border-blue-500/30 border-t-emerald-400 flex items-center justify-center text-xs font-bold font-mono bg-slate-800">
-              {Math.round(parseFloat(cabUtilizationData.utilizationPct))}%
+          {/* Utilization % Metric Banner & Download Action */}
+          <div className="flex flex-wrap items-center gap-3 self-start md:self-auto">
+            <button
+              type="button"
+              onClick={() => setShowUtilizationModal(true)}
+              disabled={isExporting}
+              className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs px-4 py-3 rounded-2xl transition-all shadow-md hover:shadow-lg flex items-center gap-2 cursor-pointer border border-emerald-500 shrink-0"
+            >
+              <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
+              <span>{isExporting ? 'Exporting...' : 'Download Utilization Report'}</span>
+            </button>
+
+            <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white px-5 py-3 rounded-2xl shadow-md flex items-center gap-4 border border-slate-800 shrink-0">
+              <div>
+                <span className="text-[10px] uppercase font-bold tracking-wider text-blue-300 block">
+                  Fleet Utilization Rate
+                </span>
+                <span className="text-2xl font-black font-mono text-emerald-400">
+                  {cabUtilizationData.utilizationPct}%
+                </span>
+              </div>
+              <div className="w-12 h-12 rounded-full border-4 border-blue-500/30 border-t-emerald-400 flex items-center justify-center text-xs font-bold font-mono bg-slate-800">
+                {Math.round(parseFloat(cabUtilizationData.utilizationPct))}%
+              </div>
             </div>
           </div>
         </div>
@@ -2494,6 +2667,209 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
                 className="bg-slate-900 hover:bg-slate-800 text-white font-bold text-xs px-5 py-2 rounded-xl transition-colors cursor-pointer"
               >
                 Close View
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* DEDICATED CAB UTILIZATION EXPORT MODAL */}
+      {showUtilizationModal && (
+        <div className="fixed inset-0 z-50 bg-slate-950/80 backdrop-blur-xs flex items-center justify-center p-4 sm:p-6 animate-in fade-in duration-150">
+          <div
+            className="fixed inset-0"
+            onClick={() => !isExporting && setShowUtilizationModal(false)}
+          />
+          <div className="relative bg-white rounded-3xl shadow-2xl border border-slate-200 w-full max-w-3xl overflow-hidden z-10 animate-in zoom-in-95 duration-150 flex flex-col max-h-[90vh]">
+            {/* Header */}
+            <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white p-6 flex items-start justify-between gap-4">
+              <div>
+                <div className="flex items-center gap-2.5">
+                  <div className="p-2 bg-emerald-500/20 text-emerald-400 rounded-xl">
+                    <FileSpreadsheet className="w-5 h-5" />
+                  </div>
+                  <div>
+                    <h3 className="text-lg font-extrabold text-white">
+                      Download Cab Utilization Reports
+                    </h3>
+                    <p className="text-xs text-slate-300 mt-0.5">
+                      Export comprehensive fleet utilization spreadsheets in Microsoft Excel (.xlsx) format.
+                    </p>
+                  </div>
+                </div>
+
+                {/* Active Scope Badge */}
+                <div className="mt-4 flex flex-wrap items-center gap-2 text-xs">
+                  <span className="bg-blue-900/80 text-blue-200 border border-blue-700/80 px-2.5 py-1 rounded-lg font-medium flex items-center gap-1.5">
+                    <Calendar className="w-3.5 h-3.5 text-blue-400" />
+                    <span>Period: <strong>{activePeriodTitle}</strong></span>
+                  </span>
+                  <span className="bg-slate-800 text-slate-300 border border-slate-700 px-2.5 py-1 rounded-lg font-medium flex items-center gap-1.5">
+                    <Building2 className="w-3.5 h-3.5 text-slate-400" />
+                    <span>Client: <strong>{selectedClientFilter === 'all' ? 'All Clients' : selectedClientFilter}</strong></span>
+                  </span>
+                  <span className="bg-emerald-950 text-emerald-300 border border-emerald-800 px-2.5 py-1 rounded-lg font-mono font-bold">
+                    {cabUtilizationData.activeCount} Active Cabs • {cabUtilizationData.utilizationPct}% Utilized
+                  </span>
+                </div>
+              </div>
+
+              <button
+                onClick={() => !isExporting && setShowUtilizationModal(false)}
+                disabled={isExporting}
+                className="text-slate-400 hover:text-white p-2 rounded-xl bg-slate-800/80 hover:bg-slate-800 transition-colors cursor-pointer shrink-0 disabled:opacity-50"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Body Options */}
+            <div className="p-6 overflow-y-auto space-y-4 bg-slate-50/50">
+              {/* Option 1: UTILIZATION SUMMARY REPORT */}
+              <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xs hover:border-blue-400 transition-all space-y-3 group">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2.5 bg-blue-100 text-blue-700 rounded-xl group-hover:bg-blue-600 group-hover:text-white transition-colors shrink-0 mt-0.5">
+                      <FileSpreadsheet className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-slate-900 text-base">
+                          1. Utilization Summary Report
+                        </h4>
+                        <span className="bg-emerald-100 text-emerald-800 font-bold text-[10px] uppercase px-2 py-0.5 rounded-full">
+                          .xlsx
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                        One row per active cab for the selected period with total trips, total boardings, utilization status, and last trip date. Includes fleet-wide summary block with total utilized/idle counts and utilization %.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleExportUtilizationSummary}
+                    disabled={isExporting}
+                    className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer shrink-0 self-stretch sm:self-center"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Download Summary</span>
+                  </button>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 font-mono">
+                  <span className="font-bold text-slate-700 font-sans">Columns:</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Registration Number</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Vehicle Type</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Client</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Utilization Status</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Total Trips</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Total Boardings</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Last Trip Date</span>
+                </div>
+              </div>
+
+              {/* Option 2: UTILIZATION DATE-WISE REPORT */}
+              <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xs hover:border-emerald-400 transition-all space-y-3 group">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2.5 bg-emerald-100 text-emerald-700 rounded-xl group-hover:bg-emerald-600 group-hover:text-white transition-colors shrink-0 mt-0.5">
+                      <Calendar className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-slate-900 text-base">
+                          2. Utilization Date-Wise Report
+                        </h4>
+                        <span className="bg-emerald-100 text-emerald-800 font-bold text-[10px] uppercase px-2 py-0.5 rounded-full">
+                          .xlsx
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                        One row per cab per calendar day within the selected period (e.g. 7 rows per cab for a 7-day period). Allows the administrator to see, for any single day, exactly which cabs ran and which sat idle.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleExportUtilizationDateWise}
+                    disabled={isExporting}
+                    className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer shrink-0 self-stretch sm:self-center"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Download Date-Wise</span>
+                  </button>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 font-mono">
+                  <span className="font-bold text-slate-700 font-sans">Columns:</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Date (DD-MMM-YYYY)</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Registration Number</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Vehicle Type</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Client</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Trips That Day</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Utilized That Day (Yes/No)</span>
+                </div>
+              </div>
+
+              {/* Option 3: NOT UTILIZED CABS REPORT */}
+              <div className="bg-white rounded-2xl p-5 border border-slate-200 shadow-2xs hover:border-amber-400 transition-all space-y-3 group">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+                  <div className="flex items-start gap-3">
+                    <div className="p-2.5 bg-amber-100 text-amber-800 rounded-xl group-hover:bg-amber-500 group-hover:text-white transition-colors shrink-0 mt-0.5">
+                      <AlertTriangle className="w-5 h-5" />
+                    </div>
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h4 className="font-bold text-slate-900 text-base">
+                          3. Not Utilized Cabs Report
+                        </h4>
+                        <span className="bg-amber-100 text-amber-900 font-bold text-[10px] uppercase px-2 py-0.5 rounded-full">
+                          .xlsx
+                        </span>
+                      </div>
+                      <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                        Export an Excel file containing ONLY active cabs with zero trips in the selected period, showing days since last trip and last recorded date, sorted with the longest idle cabs first.
+                      </p>
+                    </div>
+                  </div>
+
+                  <button
+                    type="button"
+                    onClick={handleExportNotUtilizedCabs}
+                    disabled={isExporting}
+                    className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold text-xs px-4 py-2.5 rounded-xl transition-all shadow-xs flex items-center justify-center gap-2 cursor-pointer shrink-0 self-stretch sm:self-center"
+                  >
+                    <Download className="w-4 h-4" />
+                    <span>Download Not Utilized</span>
+                  </button>
+                </div>
+
+                <div className="pt-2 border-t border-slate-100 flex flex-wrap items-center gap-2 text-[11px] text-slate-500 font-mono">
+                  <span className="font-bold text-slate-700 font-sans">Columns:</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Registration Number</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Vehicle Type</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Client</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Days Since Last Trip</span>
+                  <span className="bg-slate-100 px-2 py-0.5 rounded">Last Trip Date</span>
+                </div>
+              </div>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="p-4 bg-slate-100 border-t border-slate-200 flex items-center justify-between">
+              <span className="text-xs text-slate-500">
+                All reports are generated in real-time matching on-screen fleet status and logged to Report Logs.
+              </span>
+              <button
+                type="button"
+                onClick={() => setShowUtilizationModal(false)}
+                disabled={isExporting}
+                className="bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white font-bold text-xs px-5 py-2 rounded-xl transition-colors cursor-pointer"
+              >
+                Close
               </button>
             </div>
           </div>

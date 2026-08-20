@@ -30,6 +30,7 @@ import {
   generateSampleDriversSheetTemplate,
   UploadResult 
 } from '../utils/excelParser';
+import { runCabDeduplicationCleanup } from '../utils/cabDeduplicator';
 
 interface DataUploaderProps {
   onUploadSuccess?: () => void;
@@ -49,6 +50,7 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
   const [uploaderName, setUploaderName] = useState<string>(userProfile?.name || userProfile?.email || 'Fleet Operations User');
   const [isProcessing, setIsProcessing] = useState<boolean>(false);
   const [uploadResult, setUploadResult] = useState<UploadResult | null>(null);
+  const [dedupeNotice, setDedupeNotice] = useState<string | null>(null);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   
   const [isDraggingDrivers, setIsDraggingDrivers] = useState<boolean>(false);
@@ -150,6 +152,18 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
         overrideClientName
       );
       setUploadResult(res);
+
+      if (mode === 'cabs') {
+        try {
+          const dedupeRes = await runCabDeduplicationCleanup();
+          if (dedupeRes.duplicateDocsDeleted > 0) {
+            setDedupeNotice(`${dedupeRes.duplicateDocsDeleted} duplicate cab record${dedupeRes.duplicateDocsDeleted > 1 ? 's' : ''} merged automatically`);
+          }
+        } catch (dErr) {
+          console.warn('Auto cab deduplication notice:', dErr);
+        }
+      }
+
       if (onUploadSuccess) onUploadSuccess();
     } catch (err: any) {
       console.error(`${mode} upload processing error:`, err);
@@ -580,6 +594,14 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
                 <span>Read {uploadResult.totalRecordsProcessed} cab rows ({uploadResult.cabsAdded} added, {uploadResult.cabsUpdated} updated) into the cabs collection.</span>
               )}
             </div>
+
+            {/* Auto Deduplication Notification Banner */}
+            {dedupeNotice && (
+              <div className="p-3.5 bg-blue-50 border border-blue-200 rounded-xl text-xs text-blue-900 font-semibold flex items-center justify-center gap-2">
+                <CheckCircle2 className="w-4 h-4 text-blue-600 shrink-0" />
+                <span>{dedupeNotice}</span>
+              </div>
+            )}
           </div>
 
           {/* Failed Rows / Parse Warning Panel */}

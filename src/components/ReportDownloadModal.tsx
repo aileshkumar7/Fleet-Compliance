@@ -274,11 +274,14 @@ export const ReportDownloadModal: React.FC<ReportDownloadModalProps> = ({
           </div>
 
           {/* Record Live Preview Badge */}
-          <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl flex items-center justify-between">
+          <div className="p-4 bg-slate-50 border border-slate-200/80 rounded-2xl flex items-center justify-between gap-3 flex-wrap sm:flex-nowrap">
             <div className="text-xs text-slate-600">
               <span className="font-bold text-slate-800">Selected Export Scope:</span>
               <p className="text-[11px] text-slate-500 mt-0.5">
                 Includes two sheets ("Cabs" & "Drivers") with complete attributes + alert columns.
+              </p>
+              <p className="text-[10px] text-blue-700 font-semibold mt-1">
+                ✓ Driver Checklist Rule: If Police Verification Date is mentioned & certificate is uploaded, BGV is not considered.
               </p>
             </div>
 

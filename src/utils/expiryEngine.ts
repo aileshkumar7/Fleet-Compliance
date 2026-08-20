@@ -186,12 +186,47 @@ export function analyzeCabExpiry(cab: Cab): EntityExpiryAnalysis<Cab> {
 }
 
 /**
- * Evaluates all 4 expiry fields for a Driver (Driver License, BGV, Police Verification, Medical Verification)
+ * Checklist Checkpoint for Drivers:
+ * "If Police Verification Date is mentioned and certificate is uploaded,
+ * please don't consider the BGV Date and certificate."
+ */
+export function isBgvExemptedByPoliceVerification(driver: Driver): boolean {
+  if (!driver) return false;
+  const pvDate = (driver.policeVerificationExpiryDate || '').trim();
+  if (!pvDate || pvDate === 'N/A' || pvDate.toLowerCase() === 'null' || pvDate === '-') {
+    return false;
+  }
+
+  // Police Verification date is mentioned
+  const pvStatus = (driver.policeVerificationStatus || '').trim().toLowerCase();
+  const hasUploadedCert = Boolean(
+    (driver.documentsUploaded && Array.isArray(driver.documentsUploaded) && driver.documentsUploaded.some(d => {
+      const lower = String(d).toLowerCase();
+      return lower.includes('police') || lower.includes('pvc') || lower.includes('pv') || lower.includes('verification');
+    })) ||
+    pvStatus === 'verified' ||
+    pvStatus === 'approved' ||
+    pvStatus === 'uploaded' ||
+    pvStatus === 'valid' ||
+    pvStatus === 'active' ||
+    pvDate.length > 0 // When Police Verification Date is explicitly specified in the records
+  );
+
+  return Boolean(pvDate && hasUploadedCert);
+}
+
+/**
+ * Evaluates expiry fields for a Driver (Driver License, BGV, Police Verification, Medical Verification)
+ * Respects Checklist Rule: If Police Verification Date is mentioned and certificate is uploaded,
+ * BGV Date and certificate are NOT considered.
  */
 export function analyzeDriverExpiry(driver: Driver): EntityExpiryAnalysis<Driver> {
+  const bgvExempted = isBgvExemptedByPoliceVerification(driver);
+
   const fieldsToCheck: { docName: string; fieldName: keyof Driver }[] = [
     { docName: 'Driver License', fieldName: 'driverLicenseExpiryDate' },
-    { docName: 'BGV', fieldName: 'bgvExpiryDate' },
+    // Only check BGV if Police Verification Date and certificate are NOT present
+    ...(bgvExempted ? [] : [{ docName: 'BGV', fieldName: 'bgvExpiryDate' as keyof Driver }]),
     { docName: 'Police Verification', fieldName: 'policeVerificationExpiryDate' },
     { docName: 'Medical Verification', fieldName: 'medicalVerificationExpiryDate' },
   ];

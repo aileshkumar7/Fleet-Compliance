@@ -10,13 +10,16 @@ import { useAuth } from '../context/AuthContext';
 import { Cab, Client } from '../types';
 import { analyzeCabExpiry } from '../utils/expiryEngine';
 import { matchesCabSearch } from '../utils/searchUtils';
-import { Truck, Search, RefreshCw, ShieldAlert, ShieldCheck, Calendar, Fuel, User, AlertTriangle, Building2 } from 'lucide-react';
+import { runCabDeduplicationCleanup, CabCleanupReport } from '../utils/cabDeduplicator';
+import { Truck, Search, RefreshCw, ShieldAlert, ShieldCheck, Calendar, Fuel, User, AlertTriangle, Building2, Sparkles, CheckCircle2 } from 'lucide-react';
 
 export const CabsList: React.FC = () => {
   const { userProfile, isAdmin } = useAuth();
   const [cabs, setCabs] = useState<Cab[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isDeduplicating, setIsDeduplicating] = useState<boolean>(false);
+  const [cleanupReport, setCleanupReport] = useState<CabCleanupReport | null>(null);
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
@@ -91,8 +94,50 @@ export const CabsList: React.FC = () => {
     return matchesSearch && matchesClient && (c.status || '').toLowerCase() === statusFilter;
   });
 
+  const handleRunDeduplication = async () => {
+    setIsDeduplicating(true);
+    try {
+      const report = await runCabDeduplicationCleanup();
+      setCleanupReport(report);
+    } catch (err) {
+      console.error('Failed to run cab deduplication cleanup:', err);
+    } finally {
+      setIsDeduplicating(false);
+    }
+  };
+
   return (
     <div className="space-y-6 max-w-6xl mx-auto">
+      {/* Cleanup Result Notification Banner */}
+      {cleanupReport && (
+        <div className="p-4 bg-emerald-50 border border-emerald-200 rounded-2xl flex items-start justify-between gap-3 text-xs text-emerald-900 animate-fadeIn">
+          <div className="flex items-start gap-3">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0 mt-0.5" />
+            <div>
+              <p className="font-bold text-sm">Cab Deduplication Engine Sync Complete</p>
+              <p className="mt-0.5 text-emerald-800">
+                Processed <strong>{cleanupReport.totalCabsProcessed}</strong> cabs. Found and merged <strong>{cleanupReport.duplicateGroupsFound}</strong> duplicate groups ({cleanupReport.duplicateDocsDeleted} redundant documents deleted). Normalized registration fields synced for {cleanupReport.normalizedFieldUpdatedCount} records.
+              </p>
+              {cleanupReport.mergedGroups.length > 0 && (
+                <div className="mt-2 space-y-1">
+                  {cleanupReport.mergedGroups.map((g, idx) => (
+                    <div key={idx} className="bg-white/80 p-2 rounded-lg border border-emerald-200 text-[11px] font-mono">
+                      <span>Merged normalized key <strong className="text-emerald-900">{g.registrationNormalized}</strong> ({g.primaryReg}) — Deleted duplicate doc ID(s): {g.deletedIds.join(', ')}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+          <button
+            onClick={() => setCleanupReport(null)}
+            className="text-xs text-emerald-700 hover:text-emerald-900 font-bold px-2 py-1 bg-emerald-100/60 rounded-lg cursor-pointer shrink-0"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between bg-white p-6 rounded-2xl border border-slate-200 shadow-2xs gap-4">
         <div>
           <h2 className="text-xl font-bold text-slate-800 tracking-tight flex items-center gap-2.5">
@@ -161,6 +206,16 @@ export const CabsList: React.FC = () => {
               Inactive
             </button>
           </div>
+
+          <button
+            onClick={handleRunDeduplication}
+            disabled={isDeduplicating}
+            title="Auto-merge duplicate cab records"
+            className="inline-flex items-center gap-1.5 px-3 py-2 bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded-xl border border-emerald-200 text-xs font-semibold transition-colors cursor-pointer disabled:opacity-50"
+          >
+            <Sparkles className={`w-3.5 h-3.5 text-emerald-600 ${isDeduplicating ? 'animate-spin' : ''}`} />
+            <span>{isDeduplicating ? 'Merging...' : 'Auto-Merge'}</span>
+          </button>
 
           <button
             onClick={fetchCabs}

@@ -95,10 +95,22 @@ export const ReportLogsView: React.FC = () => {
                 {logs.map((log) => (
                   <tr key={log.id} className="hover:bg-slate-50/80 transition-colors">
                     <td className="py-3.5 px-4">
-                      {log.reportType?.startsWith('excel') || log.reportType?.startsWith('trip') ? (
+                      {log.reportType?.startsWith('excel') || log.reportType?.startsWith('trip') || log.reportType?.startsWith('utilization') || log.reportType === 'not_utilized_cabs' ? (
                         <span className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase">
                           <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
-                          <span>{log.reportType === 'trip_summary' ? 'Trip Summary' : log.reportType === 'trip_detailed' ? 'Trip Detailed' : 'Excel'}</span>
+                          <span>
+                            {log.reportType === 'trip_summary'
+                              ? 'Trip Summary'
+                              : log.reportType === 'trip_detailed'
+                              ? 'Trip Detailed'
+                              : log.reportType === 'utilization_summary'
+                              ? 'Util. Summary'
+                              : log.reportType === 'utilization_date_wise'
+                              ? 'Util. Date-Wise'
+                              : log.reportType === 'not_utilized_cabs'
+                              ? 'Not Utilized'
+                              : 'Excel'}
+                          </span>
                         </span>
                       ) : (
                         <span className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-700 border border-blue-200 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase">

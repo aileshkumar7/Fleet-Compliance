@@ -396,6 +396,12 @@ export const ExpiringAlertsView: React.FC = () => {
                 <span className="text-xs font-mono text-slate-500">Sorted by urgency (fewest days remaining first)</span>
               </div>
 
+              {/* Checklist Rule Banner */}
+              <div className="bg-blue-50/80 border border-blue-200 rounded-xl p-3 flex items-center gap-2 text-xs text-blue-950">
+                <span className="font-bold text-blue-900">Checklist Checkpoint:</span>
+                <span>If Police Verification Date is mentioned and certificate is uploaded, BGV Date and certificate are not considered.</span>
+              </div>
+
               {filteredDriverAnalyses.length === 0 ? (
                 <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400 text-xs space-y-2">
                   <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />

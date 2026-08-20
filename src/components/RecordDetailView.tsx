@@ -5,7 +5,7 @@
 
 import React, { useState } from 'react';
 import { Cab, Driver } from '../types';
-import { getDocumentStatus } from '../utils/expiryEngine';
+import { getDocumentStatus, isBgvExemptedByPoliceVerification } from '../utils/expiryEngine';
 import { exportRecordExcelReport } from '../utils/reportGenerator';
 import { getDriverCabNumber } from '../utils/cabDriverUtils';
 import { useAuth } from '../context/AuthContext';
@@ -465,7 +465,7 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
                 <span>Recommended Rectification Steps to Re-activate:</span>
               </p>
               <ul className="list-disc list-inside pl-1 space-y-1 text-slate-800">
-                <li>Verify renewed document copy (DL, BGV, Police Verification, Medical, or Eye Test).</li>
+                <li>Verify renewed document copy (DL, Police Verification [supersedes BGV when date & certificate are present], Medical, or Eye Test).</li>
                 <li>Upload fresh compliance certificate via the Excel Upload or Document Portal.</li>
                 <li>Submit record to Fleet Operations Admin to switch status back to <span className="font-bold text-emerald-700 font-mono">ACTIVE</span>.</li>
               </ul>
@@ -545,45 +545,79 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
 
         {/* SECTION 2: COMPLIANCE DOCUMENTS */}
         <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-6 space-y-4">
-          <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-            <FileText className="w-5 h-5 text-blue-600" />
-            <h3 className="text-base font-bold text-slate-900">2. Compliance Documents</h3>
+          <div className="flex items-center justify-between flex-wrap gap-2 border-b border-slate-100 pb-3">
+            <div className="flex items-center gap-2">
+              <FileText className="w-5 h-5 text-blue-600" />
+              <h3 className="text-base font-bold text-slate-900">2. Compliance Documents & Verification Checklist</h3>
+            </div>
+            <span className="text-[11px] font-semibold text-slate-500 bg-slate-100 px-2.5 py-1 rounded-full border border-slate-200">
+              Driver Compliance Checklist
+            </span>
+          </div>
+
+          {/* Checklist Rule Callout */}
+          <div className="bg-blue-50/80 border border-blue-200 rounded-xl p-3.5 flex items-start gap-2.5 text-xs text-blue-950">
+            <Info className="w-4 h-4 text-blue-600 shrink-0 mt-0.5" />
+            <div>
+              <span className="font-bold text-blue-900">Checklist Rule Applied: </span>
+              <span>If Police Verification Date is mentioned and certificate is uploaded, please don't consider the BGV Date and certificate.</span>
+            </div>
           </div>
 
           <div className="space-y-3.5">
             {driverComplianceDocs.map((doc, idx) => {
+              const isBgv = doc.name.includes('BGV');
+              const bgvExempted = isBgv && isBgvExemptedByPoliceVerification(driver);
               const audit = getDocumentStatus(doc.name, doc.expiry);
+
               return (
-                <div key={idx} className="bg-slate-50 p-4 rounded-xl border border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div key={idx} className={`p-4 rounded-xl border flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 ${
+                  bgvExempted 
+                    ? 'bg-slate-50/60 border-slate-200/80' 
+                    : 'bg-slate-50 border-slate-100'
+                }`}>
                   <div>
-                    <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                      {doc.name}
-                    </label>
+                    <div className="flex items-center gap-2 mb-1">
+                      <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block">
+                        {doc.name}
+                      </label>
+                      {bgvExempted && (
+                        <span className="bg-blue-100 text-blue-800 text-[10px] font-bold px-2 py-0.5 rounded-full border border-blue-200">
+                          Bypassed (PV Active)
+                        </span>
+                      )}
+                    </div>
                     <div className="text-xs text-slate-600 mb-0.5">
                       Doc Ref/Status: <span className="font-semibold text-slate-800">{doc.number || 'N/A'}</span>
                     </div>
                     <div className="text-sm font-mono font-bold text-slate-900">
                       Expiry Date: <span className="text-slate-700">{doc.expiry || 'N/A'}</span>
                     </div>
+                    {bgvExempted && (
+                      <p className="text-[11px] text-blue-700 font-medium mt-1">
+                        ✓ Exempted by checklist rule: Police Verification Date and certificate are provided. BGV is not considered.
+                      </p>
+                    )}
                   </div>
 
                   {/* Color-coded status badge */}
                   <div className="shrink-0">
-                    {audit.status === 'expired' && (
+                    {bgvExempted ? (
+                      <span className="inline-flex items-center gap-1.5 bg-blue-50 text-blue-800 border border-blue-300 text-xs font-bold px-3 py-1.5 rounded-xl uppercase tracking-wider">
+                        <CheckCircle2 className="w-4 h-4 text-blue-600" />
+                        <span>Bypassed by Police Verification</span>
+                      </span>
+                    ) : audit.status === 'expired' ? (
                       <span className="inline-flex items-center gap-1.5 bg-rose-100 text-rose-800 border border-rose-300 text-xs font-bold px-3 py-1.5 rounded-xl uppercase tracking-wider">
                         <AlertTriangle className="w-4 h-4 text-rose-600 animate-pulse" />
                         <span>Expired: {audit.message}</span>
                       </span>
-                    )}
-
-                    {audit.status === 'expiring_soon' && (
+                    ) : audit.status === 'expiring_soon' ? (
                       <span className="inline-flex items-center gap-1.5 bg-amber-100 text-amber-800 border border-amber-300 text-xs font-bold px-3 py-1.5 rounded-xl uppercase tracking-wider">
                         <AlertTriangle className="w-4 h-4 text-amber-600" />
                         <span>Expiring Soon: {audit.message}</span>
                       </span>
-                    )}
-
-                    {audit.status === 'valid' && (
+                    ) : (
                       <span className="inline-flex items-center gap-1.5 bg-emerald-100 text-emerald-800 border border-emerald-300 text-xs font-bold px-3 py-1.5 rounded-xl uppercase tracking-wider">
                         <CheckCircle2 className="w-4 h-4 text-emerald-600" />
                         <span>Valid ({audit.message})</span>

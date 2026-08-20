@@ -8,7 +8,7 @@ import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestor
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { Driver, Cab, Client, UploadLog } from '../types';
-import { analyzeDriverExpiry } from '../utils/expiryEngine';
+import { analyzeDriverExpiry, isBgvExemptedByPoliceVerification } from '../utils/expiryEngine';
 import { matchesDriverSearch } from '../utils/searchUtils';
 import { getDriverCabNumber } from '../utils/cabDriverUtils';
 import { 
@@ -274,6 +274,13 @@ export const DriversList: React.FC = () => {
           <p className="text-xs text-slate-700 leading-relaxed">
             Every inactive driver profile listed below contains the exact reason for non-compliance or deactivation. Review the issues (e.g. DL expiry, BGV pending, Police Verification expired, Doctor Medical Fitness) and upload renewed certificates to restore active status.
           </p>
+
+          <div className="bg-amber-100/70 border border-amber-300/80 rounded-xl p-3 flex items-start gap-2 text-xs text-amber-950 font-medium">
+            <Info className="w-4 h-4 text-amber-700 shrink-0 mt-0.5" />
+            <span>
+              <strong className="text-amber-900">Checklist Checkpoint:</strong> If Police Verification Date is mentioned and certificate is uploaded, please don't consider the BGV Date and certificate.
+            </span>
+          </div>
         </div>
       )}
 
@@ -356,7 +363,16 @@ export const DriversList: React.FC = () => {
                       <td className="px-6 py-4 space-y-1 text-[11px]">
                         <div>
                           <span className="text-slate-400">BGV: </span>
-                          <span className="font-mono text-slate-700 font-medium">{d.bgvExpiryDate || 'N/A'}</span>
+                          {isBgvExemptedByPoliceVerification(d) ? (
+                            <span className="font-mono text-blue-700 font-medium">
+                              {d.bgvExpiryDate || 'N/A'}{' '}
+                              <span className="text-[10px] bg-blue-50 text-blue-800 font-semibold px-1 py-0.2 rounded border border-blue-200">
+                                Bypassed (PV Active)
+                              </span>
+                            </span>
+                          ) : (
+                            <span className="font-mono text-slate-700 font-medium">{d.bgvExpiryDate || 'N/A'}</span>
+                          )}
                         </div>
                         <div>
                           <span className="text-slate-400">Police: </span>

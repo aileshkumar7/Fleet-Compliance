@@ -217,11 +217,15 @@ export const UploadLogsList: React.FC = () => {
             }`}
           >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">New Records Added</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-emerald-800">
+                {isTripLog ? 'New Trips Added' : 'New Records Added'}
+              </span>
               <PlusCircle className="w-5 h-5 text-emerald-600" />
             </div>
             <p className="text-3xl font-black text-emerald-900 mt-2">{addedCount}</p>
-            <p className="text-[11px] text-emerald-700 mt-1">First-time drivers & cabs introduced</p>
+            <p className="text-[11px] text-emerald-700 mt-1">
+              {isTripLog ? 'First-time unique trips created' : 'First-time drivers & cabs introduced'}
+            </p>
           </div>
 
           <div 
@@ -231,26 +235,51 @@ export const UploadLogsList: React.FC = () => {
             }`}
           >
             <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-blue-800">Records Updated</span>
+              <span className="text-xs font-bold uppercase tracking-wider text-blue-800">
+                {isTripLog ? 'Trips Updated' : 'Records Updated'}
+              </span>
               <Edit3 className="w-5 h-5 text-blue-600" />
             </div>
             <p className="text-3xl font-black text-blue-900 mt-2">{updatedCount}</p>
-            <p className="text-[11px] text-blue-700 mt-1">Existing records with updated details</p>
+            <p className="text-[11px] text-blue-700 mt-1">
+              {isTripLog ? 'Existing trips overwritten/merged' : 'Existing records with updated details'}
+            </p>
           </div>
 
-          <div 
-            onClick={() => setFilterType('status_changed')}
-            className={`p-5 rounded-2xl border transition-all cursor-pointer ${
-              filterType === 'status_changed' ? 'bg-purple-50 border-purple-300 ring-2 ring-purple-500/20' : 'bg-white border-slate-200 hover:border-purple-200'
-            }`}
-          >
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold uppercase tracking-wider text-purple-800">Status Movements</span>
-              <ArrowRightLeft className="w-5 h-5 text-purple-600" />
+          {isTripLog ? (
+            <div 
+              className="p-5 rounded-2xl border bg-purple-50/50 border-purple-200 transition-all"
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-purple-800">Duplicates Collapsed</span>
+                <Car className="w-5 h-5 text-purple-600" />
+              </div>
+              <p className="text-3xl font-black text-purple-900 mt-2">
+                {selectedLog.details?.duplicateRowsCollapsed !== undefined 
+                  ? selectedLog.details.duplicateRowsCollapsed 
+                  : (selectedLog.details?.totalRowsRead ? Math.max(0, selectedLog.details.totalRowsRead - selectedLog.recordCounts) : 0)}
+              </p>
+              <p className="text-[11px] text-purple-700 mt-1">
+                {selectedLog.details?.totalRowsRead 
+                  ? `From ${selectedLog.details.totalRowsRead} raw passenger rows`
+                  : 'Passenger rows merged into single trips'}
+              </p>
             </div>
-            <p className="text-3xl font-black text-purple-900 mt-2">{statusChangedCount}</p>
-            <p className="text-[11px] text-purple-700 mt-1">Moved between Active ↔ Inactive</p>
-          </div>
+          ) : (
+            <div 
+              onClick={() => setFilterType('status_changed')}
+              className={`p-5 rounded-2xl border transition-all cursor-pointer ${
+                filterType === 'status_changed' ? 'bg-purple-50 border-purple-300 ring-2 ring-purple-500/20' : 'bg-white border-slate-200 hover:border-purple-200'
+              }`}
+            >
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-bold uppercase tracking-wider text-purple-800">Status Movements</span>
+                <ArrowRightLeft className="w-5 h-5 text-purple-600" />
+              </div>
+              <p className="text-3xl font-black text-purple-900 mt-2">{statusChangedCount}</p>
+              <p className="text-[11px] text-purple-700 mt-1">Moved between Active ↔ Inactive</p>
+            </div>
+          )}
         </div>
 
         {/* Change Logs List Section */}
@@ -323,9 +352,9 @@ export const UploadLogsList: React.FC = () => {
                 <div key={idx} className="py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 hover:bg-slate-50/60 rounded-xl px-2 transition-colors">
                   <div className="flex items-center gap-3">
                     <div className={`p-2 rounded-xl shrink-0 ${
-                      change.type === 'driver' ? 'bg-blue-100 text-blue-700' : 'bg-teal-100 text-teal-700'
+                      change.type === 'driver' ? 'bg-blue-100 text-blue-700' : change.type === 'trip' ? 'bg-purple-100 text-purple-700' : 'bg-teal-100 text-teal-700'
                     }`}>
-                      {change.type === 'driver' ? <User className="w-4 h-4" /> : <Truck className="w-4 h-4" />}
+                      {change.type === 'driver' ? <User className="w-4 h-4" /> : change.type === 'trip' ? <Car className="w-4 h-4" /> : <Truck className="w-4 h-4" />}
                     </div>
 
                     <div>

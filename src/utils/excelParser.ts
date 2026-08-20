@@ -7,6 +7,7 @@ import * as XLSX from 'xlsx';
 import { collection, getDocs, addDoc, updateDoc, doc, setDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Driver, Cab, UploadChangeRecord } from '../types';
+import { normalizeRegistration } from './registrationUtils';
 
 export interface ParseError {
   sheetName: string;
@@ -534,6 +535,7 @@ export async function processDataSheetUpload(
 
   const cabsMapByEts = new Map<string, { id: string; data: any }>();
   const cabsMapByReg = new Map<string, { id: string; data: any }>();
+  const cabsMapByNormReg = new Map<string, { id: string; data: any }>();
 
   if (uploadType === 'cabs' || uploadType === 'all') {
     const existingCabsSnap = await getDocs(collection(db, 'cabs'));
@@ -544,6 +546,10 @@ export async function processDataSheetUpload(
       }
       if (data.registrationNumber) {
         cabsMapByReg.set(String(data.registrationNumber).trim().toLowerCase(), { id: docSnap.id, data });
+      }
+      const norm = data.registrationNormalized || normalizeRegistration(data.registrationNumber) || (data.etsVehicleId ? normalizeRegistration(data.etsVehicleId) : '');
+      if (norm) {
+        cabsMapByNormReg.set(norm, { id: docSnap.id, data });
       }
     });
   }
@@ -824,6 +830,8 @@ export async function processDataSheetUpload(
 
       const etsVehicleId = cleanString(cabData.etsVehicleId);
       const registrationNumber = cleanString(cabData.registrationNumber);
+      const registrationNormalized = normalizeRegistration(registrationNumber) || (etsVehicleId ? normalizeRegistration(etsVehicleId) : '');
+      cabData.registrationNormalized = registrationNormalized;
 
       if (!etsVehicleId && !registrationNumber) {
         result.failedRows.push({
@@ -851,9 +859,10 @@ export async function processDataSheetUpload(
         clientsToInsert.set(cabData.clientId, cabData.clientName);
       }
 
+      const existingByNormReg = registrationNormalized ? cabsMapByNormReg.get(registrationNormalized) : null;
       const existingByEts = etsVehicleId ? cabsMapByEts.get(etsVehicleId.toLowerCase()) : null;
       const existingByReg = registrationNumber ? cabsMapByReg.get(registrationNumber.toLowerCase()) : null;
-      const existing = existingByEts || existingByReg;
+      const existing = existingByNormReg || existingByReg || existingByEts;
 
       try {
         if (existing) {
@@ -900,18 +909,35 @@ export async function processDataSheetUpload(
             });
           }
 
+          const finalNormalized = registrationNormalized || existing.data.registrationNormalized || normalizeRegistration(existing.data.registrationNumber) || '';
+
           await updateDoc(doc(db, 'cabs', existing.id), {
             ...cabData,
+            registrationNormalized: finalNormalized,
             updatedBy: uploadedBy || 'Admin',
             updatedTime: uploadTimestamp,
             uploadBatchId,
             uploadBatchFileName: file.name,
           });
           result.cabsUpdated++;
+
+          const updatedCabData = {
+            id: existing.id,
+            data: {
+              ...existing.data,
+              ...cabData,
+              registrationNormalized: finalNormalized,
+              status
+            }
+          };
+          if (etsVehicleId) cabsMapByEts.set(etsVehicleId.toLowerCase(), updatedCabData);
+          if (registrationNumber) cabsMapByReg.set(registrationNumber.toLowerCase(), updatedCabData);
+          if (finalNormalized) cabsMapByNormReg.set(finalNormalized, updatedCabData);
         } else {
           const newDocRef = await addDoc(collection(db, 'cabs'), {
             etsVehicleId: cabData.etsVehicleId || '',
             registrationNumber: cabData.registrationNumber || '',
+            registrationNormalized: registrationNormalized || '',
             clientName: cabData.clientName || '',
             vehicleType: cabData.vehicleType || '',
             overallComplianceStatus: cabData.overallComplianceStatus || 'Pending',
@@ -951,8 +977,17 @@ export async function processDataSheetUpload(
             uploadBatchFileName: file.name,
           });
 
-          if (etsVehicleId) cabsMapByEts.set(etsVehicleId.toLowerCase(), { id: newDocRef.id, data: cabData });
-          if (registrationNumber) cabsMapByReg.set(registrationNumber.toLowerCase(), { id: newDocRef.id, data: cabData });
+          const createdCabData = {
+            id: newDocRef.id,
+            data: {
+              ...cabData,
+              registrationNormalized: registrationNormalized || '',
+              status
+            }
+          };
+          if (etsVehicleId) cabsMapByEts.set(etsVehicleId.toLowerCase(), createdCabData);
+          if (registrationNumber) cabsMapByReg.set(registrationNumber.toLowerCase(), createdCabData);
+          if (registrationNormalized) cabsMapByNormReg.set(registrationNormalized, createdCabData);
 
           uploadChanges.push({
             recordId: newDocRef.id,
