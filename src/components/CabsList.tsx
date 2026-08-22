@@ -11,6 +11,7 @@ import { Cab, Client } from '../types';
 import { analyzeCabExpiry } from '../utils/expiryEngine';
 import { matchesCabSearch } from '../utils/searchUtils';
 import { runCabDeduplicationCleanup, CabCleanupReport } from '../utils/cabDeduplicator';
+import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
 import { Truck, Search, RefreshCw, ShieldAlert, ShieldCheck, Calendar, Fuel, User, AlertTriangle, Building2, Sparkles, CheckCircle2 } from 'lucide-react';
 
 export const CabsList: React.FC = () => {
@@ -27,19 +28,14 @@ export const CabsList: React.FC = () => {
   const fetchCabs = () => {
     setIsLoading(true);
 
-    const userClientKeys = Array.from(new Set([
-      userProfile?.clientId,
-      ...(userProfile?.assignedClientIds || [])
-    ].filter(Boolean).map(s => String(s).trim().toLowerCase())));
+    let rawCabs: Cab[] = [];
+    let rawClients: Client[] = [];
 
-    const isAllClients = isAdmin || userClientKeys.includes('all');
-
-    const isAccessible = (item: { clientId?: string; clientName?: string }) => {
-      if (isAllClients) return true;
-      if (userClientKeys.length === 0) return true;
-      const cId = (item.clientId || '').trim().toLowerCase();
-      const cName = (item.clientName || '').trim().toLowerCase();
-      return userClientKeys.some(k => k === cId || k === cName);
+    const applyScope = () => {
+      const scope = resolveUserClientScope(userProfile, rawClients);
+      setCabs(rawCabs.filter(c => isRecordAccessible(c, scope)));
+      setClients(rawClients.filter(c => isRecordAccessible(c, scope)));
+      setIsLoading(false);
     };
 
     const q = query(collection(db, 'cabs'));
@@ -55,10 +51,8 @@ export const CabsList: React.FC = () => {
           clientName: data.clientName || data.client || 'N/A',
         } as Cab);
       });
-
-      const accessible = items.filter(isAccessible);
-      setCabs(accessible);
-      setIsLoading(false);
+      rawCabs = items;
+      applyScope();
     }, (err) => {
       console.error('Error listening to cabs:', err);
       setIsLoading(false);
@@ -67,7 +61,8 @@ export const CabsList: React.FC = () => {
     const unsubscribeClients = onSnapshot(collection(db, 'clients'), (clientSnap) => {
       const cItems: Client[] = [];
       clientSnap.forEach(c => cItems.push({ id: c.id, ...c.data() } as Client));
-      setClients(cItems);
+      rawClients = cItems;
+      applyScope();
     }, (err) => console.error('Error listening to clients in CabsList:', err));
 
     return () => {

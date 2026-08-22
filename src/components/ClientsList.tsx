@@ -8,6 +8,7 @@ import { collection, getDocs, addDoc, deleteDoc, doc, query, onSnapshot } from '
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { Client, Driver, Cab } from '../types';
+import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
 import { Building2, Search, RefreshCw, Layers, Plus, Trash2, CheckCircle2, AlertCircle, ShieldCheck, Sparkles, Truck, Users } from 'lucide-react';
 
 export const ClientsList: React.FC = () => {
@@ -29,19 +30,16 @@ export const ClientsList: React.FC = () => {
   useEffect(() => {
     setIsLoading(true);
 
-    const userClientKeys = Array.from(new Set([
-      userProfile?.clientId,
-      ...(userProfile?.assignedClientIds || [])
-    ].filter(Boolean).map(s => String(s).trim().toLowerCase())));
+    let rawClients: Client[] = [];
+    let rawDrivers: Driver[] = [];
+    let rawCabs: Cab[] = [];
 
-    const isAllClients = isAdmin || userClientKeys.includes('all');
-
-    const isAccessible = (c: { clientId?: string; clientName?: string }) => {
-      if (isAllClients) return true;
-      if (userClientKeys.length === 0) return true;
-      const cId = (c.clientId || '').trim().toLowerCase();
-      const cName = (c.clientName || '').trim().toLowerCase();
-      return userClientKeys.some(k => k === cId || k === cName);
+    const applyScope = () => {
+      const scope = resolveUserClientScope(userProfile, rawClients);
+      setClients(rawClients.filter(c => isRecordAccessible(c, scope)));
+      setDrivers(rawDrivers.filter(d => isRecordAccessible(d, scope)));
+      setCabs(rawCabs.filter(c => isRecordAccessible(c, scope)));
+      setIsLoading(false);
     };
 
     const unsubClients = onSnapshot(collection(db, 'clients'), (snap) => {
@@ -55,20 +53,22 @@ export const ClientsList: React.FC = () => {
         }
         items.push({ id: docSnap.id, ...data });
       });
-      setClients(items.filter(isAccessible));
-      setIsLoading(false);
+      rawClients = items;
+      applyScope();
     }, err => console.error('Clients listener error:', err));
 
     const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snap) => {
       const dItems: Driver[] = [];
       snap.forEach(d => dItems.push({ id: d.id, ...d.data() } as Driver));
-      setDrivers(dItems);
+      rawDrivers = dItems;
+      applyScope();
     });
 
     const unsubCabs = onSnapshot(collection(db, 'cabs'), (snap) => {
       const cItems: Cab[] = [];
       snap.forEach(c => cItems.push({ id: c.id, ...c.data() } as Cab));
-      setCabs(cItems);
+      rawCabs = cItems;
+      applyScope();
     });
 
     return () => {

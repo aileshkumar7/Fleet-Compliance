@@ -33,11 +33,12 @@ import { Dashboard } from './components/Dashboard';
 import { ExpiringAlertsView } from './components/ExpiringAlertsView';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from './lib/firebase';
-import { Cab, Driver } from './types';
+import { Cab, Driver, Client } from './types';
 import { analyzeCabExpiry, analyzeDriverExpiry } from './utils/expiryEngine';
+import { resolveUserClientScope, isRecordAccessible } from './utils/clientUtils';
 
 export default function App() {
-  const { user, userProfile, isAdmin, logout, canAccess, loading } = useAuth();
+  const { user, userProfile, isAdmin, logout, canAccess, isLoading } = useAuth();
 
   const [activeTab, setActiveTab] = useState<'dashboard' | 'alerts' | 'uploader' | 'tripUploader' | 'tripAnalytics' | 'drivers' | 'cabs' | 'clients' | 'logs' | 'reportLogs' | 'users' | 'userLogs'>('dashboard');
   const [alertCount, setAlertCount] = useState<number>(0);
@@ -49,44 +50,62 @@ export default function App() {
 
     let cabsList: Cab[] = [];
     let driversList: Driver[] = [];
+    let clientsList: Client[] = [];
 
     const updateCounts = () => {
-      const isAllClients = isAdmin || userProfile?.assignedClientIds?.includes('all');
-      const allowedClientIds = userProfile?.assignedClientIds || [];
+      const scope = resolveUserClientScope(userProfile, clientsList);
 
-      const filteredCabs = isAllClients
-        ? cabsList
-        : cabsList.filter(c => allowedClientIds.includes(c.clientId) || allowedClientIds.includes(c.clientName));
-
-      const filteredDrivers = isAllClients
-        ? driversList
-        : driversList.filter(d => allowedClientIds.includes(d.clientId) || allowedClientIds.includes(d.clientName));
+      const filteredCabs = cabsList.filter(c => isRecordAccessible(c, scope));
+      const filteredDrivers = driversList.filter(d => isRecordAccessible(d, scope));
 
       const cAlerts = filteredCabs.map(analyzeCabExpiry).filter(a => a.hasAlert).length;
       const dAlerts = filteredDrivers.map(analyzeDriverExpiry).filter(a => a.hasAlert).length;
       setAlertCount(cAlerts + dAlerts);
     };
 
+    const unsubClients = onSnapshot(collection(db, 'clients'), (snap) => {
+      clientsList = [];
+      snap.forEach(doc => clientsList.push({ id: doc.id, ...doc.data() } as Client));
+      updateCounts();
+    });
+
     const unsubCabs = onSnapshot(collection(db, 'cabs'), (snap) => {
       cabsList = [];
-      snap.forEach(doc => cabsList.push({ id: doc.id, ...doc.data() } as Cab));
+      snap.forEach(doc => {
+        const data = doc.data();
+        cabsList.push({ 
+          id: doc.id, 
+          ...data,
+          registrationNumber: data.registrationNumber || data.regNumber || data.vehicleNumber || 'N/A',
+          clientName: data.clientName || data.client || 'N/A',
+        } as Cab);
+      });
       updateCounts();
     });
 
     const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snap) => {
       driversList = [];
-      snap.forEach(doc => driversList.push({ id: doc.id, ...doc.data() } as Driver));
+      snap.forEach(doc => {
+        const data = doc.data();
+        driversList.push({ 
+          id: doc.id, 
+          ...data,
+          name: data.name || data.driverName || 'N/A',
+          clientName: data.clientName || data.client || 'N/A',
+        } as Driver);
+      });
       updateCounts();
     });
 
     return () => {
+      unsubClients();
       unsubCabs();
       unsubDrivers();
     };
   }, [user, userProfile, isAdmin]);
 
   // Loading state guard
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="min-h-screen bg-slate-900 flex items-center justify-center p-4">
         <div className="text-center space-y-4">

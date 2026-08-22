@@ -11,6 +11,7 @@ import { Driver, Cab, Client, UploadLog } from '../types';
 import { analyzeDriverExpiry, isBgvExemptedByPoliceVerification } from '../utils/expiryEngine';
 import { matchesDriverSearch } from '../utils/searchUtils';
 import { getDriverCabNumber } from '../utils/cabDriverUtils';
+import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
 import { 
   Users, Search, RefreshCw, ShieldAlert, ShieldCheck, Phone, MapPin, 
   AlertTriangle, Building2, CheckCircle2, FileText, ArrowRight, Info, Truck
@@ -30,19 +31,16 @@ export const DriversList: React.FC = () => {
   const fetchDrivers = () => {
     setIsLoading(true);
 
-    const userClientKeys = Array.from(new Set([
-      userProfile?.clientId,
-      ...(userProfile?.assignedClientIds || [])
-    ].filter(Boolean).map(s => String(s).trim().toLowerCase())));
+    let rawDrivers: Driver[] = [];
+    let rawCabs: Cab[] = [];
+    let rawClients: Client[] = [];
 
-    const isAllClients = isAdmin || userClientKeys.includes('all');
-
-    const isAccessible = (item: { clientId?: string; clientName?: string }) => {
-      if (isAllClients) return true;
-      if (userClientKeys.length === 0) return true;
-      const cId = (item.clientId || '').trim().toLowerCase();
-      const cName = (item.clientName || '').trim().toLowerCase();
-      return userClientKeys.some(k => k === cId || k === cName);
+    const applyScope = () => {
+      const scope = resolveUserClientScope(userProfile, rawClients);
+      setDrivers(rawDrivers.filter(d => isRecordAccessible(d, scope)));
+      setCabs(rawCabs.filter(c => isRecordAccessible(c, scope)));
+      setClients(rawClients.filter(c => isRecordAccessible(c, scope)));
+      setIsLoading(false);
     };
 
     // Real-time Drivers listener
@@ -60,10 +58,8 @@ export const DriversList: React.FC = () => {
           clientName: data.clientName || data.client || 'N/A',
         } as Driver);
       });
-
-      const accessible = items.filter(isAccessible);
-      setDrivers(accessible);
-      setIsLoading(false);
+      rawDrivers = items;
+      applyScope();
     }, (err) => {
       console.error('Error listening to drivers:', err);
       setIsLoading(false);
@@ -73,14 +69,16 @@ export const DriversList: React.FC = () => {
     const unsubscribeClients = onSnapshot(collection(db, 'clients'), (clientSnap) => {
       const cItems: Client[] = [];
       clientSnap.forEach(c => cItems.push({ id: c.id, ...c.data() } as Client));
-      setClients(cItems);
+      rawClients = cItems;
+      applyScope();
     }, (err) => console.error('Error listening to clients in DriversList:', err));
 
     // Fetch Cabs for vehicle search cross-referencing
     const unsubscribeCabs = onSnapshot(collection(db, 'cabs'), (cabSnap) => {
       const cabItems: Cab[] = [];
       cabSnap.forEach(c => cabItems.push({ id: c.id, ...c.data() } as Cab));
-      setCabs(cabItems);
+      rawCabs = cabItems;
+      applyScope();
     }, (err) => console.error('Error listening to cabs in DriversList:', err));
 
     // Fetch Latest Upload Log

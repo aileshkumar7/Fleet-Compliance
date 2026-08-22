@@ -158,8 +158,17 @@ export const ManageUsers: React.FC = () => {
         throw new Error('CLIENT BINDING: Every User account must be bound to exactly one Client Organization.');
       }
 
-      const finalClientId = role === 'admin' ? 'all' : boundClientId.trim();
-      const finalAssignedClientIds = role === 'admin' ? ['all'] : [finalClientId];
+      const matchedClient = clientsList.find(c => 
+        c.clientId.toLowerCase() === boundClientId.trim().toLowerCase() || 
+        c.clientName.toLowerCase() === boundClientId.trim().toLowerCase()
+      );
+      const clientName = matchedClient?.clientName || boundClientId.trim();
+      const clientId = matchedClient?.clientId || boundClientId.trim();
+
+      const finalClientId = role === 'admin' ? 'all' : clientId;
+      const finalAssignedClientIds = role === 'admin' 
+        ? ['all'] 
+        : Array.from(new Set([clientId, clientName, boundClientId.trim()].filter(Boolean)));
 
       if (editingUserId) {
         // Update existing user profile in Firestore
@@ -171,6 +180,36 @@ export const ManageUsers: React.FC = () => {
           assignedClientIds: finalAssignedClientIds,
           permissions,
         });
+
+        // Also update local_user_ document if exists
+        try {
+          if (email) {
+            await setDoc(doc(db, 'users', `local_user_${email.trim().toLowerCase()}`), {
+              uid: editingUserId,
+              name,
+              email: email.trim(),
+              role,
+              clientId: finalClientId,
+              assignedClientIds: finalAssignedClientIds,
+              permissions,
+              updatedAt: new Date().toISOString(),
+            }, { merge: true });
+          }
+          if (name) {
+            await setDoc(doc(db, 'users', `local_user_${name.trim().toLowerCase()}`), {
+              uid: editingUserId,
+              name,
+              email: email?.trim() || '',
+              role,
+              clientId: finalClientId,
+              assignedClientIds: finalAssignedClientIds,
+              permissions,
+              updatedAt: new Date().toISOString(),
+            }, { merge: true });
+          }
+        } catch (e) {
+          console.warn('Notice updating local alias doc:', e);
+        }
 
         setFeedback({ type: 'success', message: `User profile for "${name}" updated successfully.` });
       } else {
@@ -210,6 +249,19 @@ export const ManageUsers: React.FC = () => {
         };
 
         await setDoc(doc(db, 'users', newUid), profile);
+
+        // Also write aliases for instantaneous login lookup
+        try {
+          if (email) {
+            await setDoc(doc(db, 'users', `local_user_${email.trim().toLowerCase()}`), profile, { merge: true });
+          }
+          if (name) {
+            await setDoc(doc(db, 'users', `local_user_${name.trim().toLowerCase()}`), profile, { merge: true });
+          }
+        } catch (e) {
+          console.warn('Notice writing local alias doc:', e);
+        }
+
         setFeedback({ type: 'success', message: `New user account "${name}" created successfully!` });
       }
 

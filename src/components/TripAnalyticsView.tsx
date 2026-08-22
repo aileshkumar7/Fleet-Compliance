@@ -52,6 +52,7 @@ import { Trip, Cab, Client } from '../types';
 import { useAuth } from '../context/AuthContext';
 import { exportTripSummaryReport, exportTripDetailedReport, exportUtilizationSummaryReport, exportUtilizationDateWiseReport, exportNotUtilizedCabsReport } from '../utils/reportGenerator';
 import { normalizeRegistration } from '../utils/registrationUtils';
+import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
 
 export type PeriodType = '24h' | '7d' | '1m';
 
@@ -310,6 +311,18 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
 
   // Subscribe to trips, cabs, and clients collections in Firestore
   useEffect(() => {
+    let rawTrips: Trip[] = [];
+    let rawCabs: Cab[] = [];
+    let rawClients: Client[] = [];
+
+    const applyScope = () => {
+      const scope = resolveUserClientScope(userProfile, rawClients);
+      setTrips(rawTrips.filter(t => isRecordAccessible(t, scope)));
+      setCabs(rawCabs.filter(c => isRecordAccessible(c, scope)));
+      setClients(rawClients.filter(c => isRecordAccessible(c, scope)));
+      setLoading(false);
+    };
+
     const qTrips = query(collection(db, 'trips'));
     const unsubTrips = onSnapshot(
       qTrips,
@@ -318,8 +331,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
         snapshot.forEach((doc) => {
           list.push({ id: doc.id, ...doc.data() } as Trip);
         });
-        setTrips(list);
-        setLoading(false);
+        rawTrips = list;
+        applyScope();
       },
       (err) => {
         console.error('Error fetching trips for analytics:', err);
@@ -341,7 +354,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
             clientName: data.clientName || data.client || 'N/A',
           } as Cab);
         });
-        setCabs(list);
+        rawCabs = list;
+        applyScope();
       },
       (err) => console.error('Error fetching cabs for analytics:', err)
     );
@@ -354,7 +368,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
         snapshot.forEach((doc) => {
           list.push({ id: doc.id, ...doc.data() } as Client);
         });
-        setClients(list);
+        rawClients = list;
+        applyScope();
       },
       (err) => console.error('Error fetching clients for analytics:', err)
     );
@@ -364,7 +379,7 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       unsubCabs();
       unsubClients();
     };
-  }, []);
+  }, [userProfile, isAdmin]);
 
   // Map and List of all available dates with trips in the database
   const availableTripDatesMap = useMemo(() => {

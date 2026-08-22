@@ -12,6 +12,7 @@ import { analyzeCabExpiry, analyzeDriverExpiry } from '../utils/expiryEngine';
 import { purgeAllDummyData } from '../utils/seedDriversData';
 import { matchesCabSearch, matchesDriverSearch } from '../utils/searchUtils';
 import { getDriverCabNumber } from '../utils/cabDriverUtils';
+import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
 import { RecordDetailView } from './RecordDetailView';
 import { ReportDownloadModal } from './ReportDownloadModal';
 import { 
@@ -81,19 +82,20 @@ export const Dashboard: React.FC<DashboardProps> = ({
   useEffect(() => {
     setIsLoading(true);
 
-    const userClientKeys = Array.from(new Set([
-      userProfile?.clientId,
-      ...(userProfile?.assignedClientIds || [])
-    ].filter(Boolean).map(s => String(s).trim().toLowerCase())));
+    let rawDrivers: Driver[] = [];
+    let rawCabs: Cab[] = [];
+    let rawClients: Client[] = [];
 
-    const isAllClients = isAdmin || userClientKeys.includes('all');
+    const applyClientScope = () => {
+      const scope = resolveUserClientScope(userProfile, rawClients);
 
-    const isAccessible = (item: { clientId?: string; clientName?: string }) => {
-      if (isAllClients) return true;
-      if (userClientKeys.length === 0) return true;
-      const cId = (item.clientId || '').trim().toLowerCase();
-      const cName = (item.clientName || '').trim().toLowerCase();
-      return userClientKeys.some(k => k === cId || k === cName);
+      const accessibleDrivers = rawDrivers.filter(d => isRecordAccessible(d, scope));
+      const accessibleCabs = rawCabs.filter(c => isRecordAccessible(c, scope));
+      const accessibleClients = rawClients.filter(c => isRecordAccessible(c, scope));
+
+      setDrivers(accessibleDrivers);
+      setCabs(accessibleCabs);
+      setClients(accessibleClients);
     };
 
     // 1. Subscribe to drivers
@@ -110,8 +112,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
           clientName: data.clientName || data.client || 'N/A',
         } as Driver);
       });
-      const accessible = items.filter(isAccessible);
-      setDrivers(accessible);
+      rawDrivers = items;
+      applyClientScope();
     }, (err) => console.error('Error listening to drivers:', err));
 
     // 2. Subscribe to cabs
@@ -127,8 +129,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
           clientName: data.clientName || data.client || 'N/A',
         } as Cab);
       });
-      const accessible = items.filter(isAccessible);
-      setCabs(accessible);
+      rawCabs = items;
+      applyClientScope();
     }, (err) => console.error('Error listening to cabs:', err));
 
     // 3. Subscribe to clients
@@ -137,8 +139,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
       snapshot.forEach(docSnap => {
         items.push({ id: docSnap.id, ...docSnap.data() } as Client);
       });
-      const accessible = items.filter(isAccessible);
-      setClients(accessible);
+      rawClients = items;
+      applyClientScope();
     }, (err) => console.error('Error listening to clients:', err));
 
     // 4. Subscribe to latest upload log for timestamp

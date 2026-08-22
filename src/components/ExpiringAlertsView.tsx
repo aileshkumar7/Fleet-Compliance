@@ -15,6 +15,7 @@ import {
 } from '../utils/expiryEngine';
 import { matchesCabSearch, matchesDriverSearch } from '../utils/searchUtils';
 import { getDriverCabNumber } from '../utils/cabDriverUtils';
+import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
 import { 
   AlertTriangle, 
   Truck, 
@@ -51,19 +52,16 @@ export const ExpiringAlertsView: React.FC = () => {
   useEffect(() => {
     setIsLoading(true);
 
-    const userClientKeys = Array.from(new Set([
-      userProfile?.clientId,
-      ...(userProfile?.assignedClientIds || [])
-    ].filter(Boolean).map(s => String(s).trim().toLowerCase())));
+    let rawCabs: Cab[] = [];
+    let rawDrivers: Driver[] = [];
+    let rawClients: Client[] = [];
 
-    const isAllClients = isAdmin || userClientKeys.includes('all');
-
-    const isAccessible = (item: { clientId?: string; clientName?: string }) => {
-      if (isAllClients) return true;
-      if (userClientKeys.length === 0) return true;
-      const cId = (item.clientId || '').trim().toLowerCase();
-      const cName = (item.clientName || '').trim().toLowerCase();
-      return userClientKeys.some(k => k === cId || k === cName);
+    const applyScope = () => {
+      const scope = resolveUserClientScope(userProfile, rawClients);
+      setCabs(rawCabs.filter(c => isRecordAccessible(c, scope)));
+      setDrivers(rawDrivers.filter(d => isRecordAccessible(d, scope)));
+      setClients(rawClients.filter(c => isRecordAccessible(c, scope)));
+      setIsLoading(false);
     };
 
     const unsubCabs = onSnapshot(collection(db, 'cabs'), (snap) => {
@@ -78,9 +76,8 @@ export const ExpiringAlertsView: React.FC = () => {
           clientName: data.clientName || data.client || 'N/A',
         } as Cab);
       });
-
-      const accessible = items.filter(isAccessible);
-      setCabs(accessible);
+      rawCabs = items;
+      applyScope();
     });
 
     const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snap) => {
@@ -96,16 +93,15 @@ export const ExpiringAlertsView: React.FC = () => {
           clientName: data.clientName || data.client || 'N/A',
         } as Driver);
       });
-
-      const accessible = items.filter(isAccessible);
-      setDrivers(accessible);
-      setIsLoading(false);
+      rawDrivers = items;
+      applyScope();
     });
 
     const unsubClients = onSnapshot(collection(db, 'clients'), (snap) => {
       const items: Client[] = [];
       snap.forEach(doc => items.push({ id: doc.id, ...doc.data() } as Client));
-      setClients(items);
+      rawClients = items;
+      applyScope();
     });
 
     return () => {
