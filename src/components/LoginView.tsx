@@ -79,10 +79,11 @@ export const LoginView: React.FC = () => {
   const handleQuickDemo = async (demoRole: 'admin' | 'user') => {
     setIsLoading(true);
     setErrorMessage('');
-    const demoEmail = demoRole === 'admin' ? 'admin@fleet.com' : 'user@fleet.com';
+    const demoEmail = demoRole === 'admin' ? 'admin@fleet.com' : 'ranjit@fleet.local';
+    const customName = demoRole === 'admin' ? 'Fleet System Admin' : 'Ranjit';
 
     try {
-      await loginWithLocalProfile(demoEmail, demoRole);
+      await loginWithLocalProfile(demoEmail, demoRole, customName);
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to authenticate.');
     } finally {
@@ -116,15 +117,15 @@ export const LoginView: React.FC = () => {
             </div>
           )}
 
-          {/* Admin Credentials Info Card */}
+          {/* Account Credentials Info Card */}
           <div className="bg-amber-50/80 border border-amber-200 rounded-2xl p-4 text-amber-900 text-xs space-y-2">
             <div className="flex items-center gap-2 font-bold text-amber-900">
               <KeyRound className="w-4 h-4 text-amber-700 shrink-0" />
-              <span>Account Sign In Details</span>
+              <span>Instant Sign In Accounts</span>
             </div>
             <div className="space-y-1 text-[11px] text-amber-800">
-              <p>• <strong>Admin:</strong> admin@fleet.com (Password: Password123!)</p>
-              <p>• <strong>Client Users:</strong> Enter username (e.g. Ranjit) or assigned email</p>
+              <p>• <strong>Global Admin:</strong> admin@fleet.com (Password: Password123!)</p>
+              <p>• <strong>Air India Sats User:</strong> Enter <strong>Ranjit</strong> or ranjit@fleet.local</p>
             </div>
           </div>
 
@@ -239,9 +240,9 @@ export const LoginView: React.FC = () => {
               >
                 <div className="flex items-center gap-1 text-blue-700">
                   <User className="w-3.5 h-3.5" />
-                  <span>Operations User</span>
+                  <span>Ranjit</span>
                 </div>
-                <span className="text-[10px] text-blue-600">Client Restricted</span>
+                <span className="text-[10px] text-blue-600">Air India Sats</span>
               </button>
             </div>
           </div>

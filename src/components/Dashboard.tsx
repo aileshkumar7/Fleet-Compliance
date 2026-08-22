@@ -3,7 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useMemo } from 'react';
 import { collection, onSnapshot, query, orderBy, limit } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
@@ -231,6 +231,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
     : null;
   const isDataStale = lastUploadDate === null || (daysSinceLastUpload !== null && daysSinceLastUpload > 7);
 
+  // Active client display helper
+  const activeClientDisplayName = useMemo(() => {
+    if (isAdmin || userProfile?.assignedClientIds?.includes('all')) {
+      return 'All Clients (Global Access)';
+    }
+    const cid = userProfile?.clientId || userProfile?.assignedClientIds?.[0] || '';
+    const matched = clients.find(c => 
+      c.clientId.toLowerCase() === cid.toLowerCase() || 
+      c.clientName.toLowerCase() === cid.toLowerCase()
+    );
+    if (matched) return matched.clientName;
+    if (cid.toLowerCase().includes('air')) return 'Air India Sats';
+    return cid || 'Air India Sats';
+  }, [isAdmin, userProfile, clients]);
+
   if (selectedRecord) {
     return (
       <RecordDetailView 
@@ -243,6 +258,39 @@ export const Dashboard: React.FC<DashboardProps> = ({
 
   return (
     <div className="space-y-6 max-w-7xl mx-auto">
+      {/* User Identity & Active Scope Banner */}
+      <div className="bg-slate-900 text-white p-4 rounded-2xl border border-slate-800 shadow-sm flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="flex items-center gap-3.5">
+          <div className={`w-11 h-11 rounded-2xl flex items-center justify-center text-sm font-black border shadow-xs ${
+            isAdmin ? 'bg-amber-500 text-slate-950 border-amber-400' : 'bg-blue-600 text-white border-blue-400'
+          }`}>
+            {userProfile?.name ? userProfile.name.slice(0, 2).toUpperCase() : 'US'}
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <h3 className="text-base font-bold text-white tracking-tight">
+                Logged in as <span className="text-blue-400 font-extrabold">{userProfile?.name || 'User'}</span>
+              </h3>
+              <span className={`text-[9px] font-black uppercase px-2 py-0.5 rounded-full ${
+                isAdmin ? 'bg-amber-400/20 text-amber-300 border border-amber-400/40' : 'bg-blue-400/20 text-blue-300 border border-blue-400/40'
+              }`}>
+                {isAdmin ? 'System Administrator' : 'Operations User'}
+              </span>
+            </div>
+            <p className="text-xs text-slate-300 flex items-center gap-1.5 mt-0.5">
+              <Building2 className="w-3.5 h-3.5 text-blue-400 shrink-0" />
+              <span>Assigned Organization: <strong className="text-white font-bold">{activeClientDisplayName}</strong></span>
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2">
+          <span className="text-xs text-slate-300 bg-slate-800 border border-slate-700 px-3 py-1.5 rounded-xl flex items-center gap-1.5 font-medium">
+            <ShieldCheck className="w-4 h-4 text-emerald-400" />
+            {isAdmin ? 'Global Access Mode' : `Scoped Exclusively to ${activeClientDisplayName}`}
+          </span>
+        </div>
+      </div>
       {/* Stale Data Reminder Banner (> 7 Days or No Upload) */}
       {isDataStale && (
         <div className="bg-amber-50 border border-amber-300 rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-center justify-between gap-4 shadow-2xs">
@@ -628,7 +676,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
           ) : (
             <div className="flex items-center gap-2 bg-blue-50 border border-blue-200 px-3.5 py-1.5 rounded-xl text-xs font-bold text-blue-900">
               <Building2 className="w-4 h-4 text-blue-600 shrink-0" />
-              <span>Bound Client: {userProfile?.clientId || userProfile?.assignedClientIds?.[0] || 'Bound Client'}</span>
+              <span>Bound Organization: {activeClientDisplayName}</span>
             </div>
           )}
 

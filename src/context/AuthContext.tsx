@@ -5,6 +5,8 @@ import { auth, db } from '../lib/firebase';
 import { UserProfile, UserPermissions, Client } from '../types';
 import { logUserActivity } from '../utils/activityLogger';
 
+import { ensureCompleteDriversDataset } from '../utils/seedDriversData';
+
 interface AuthContextType {
   user: User | { uid: string; email: string; displayName?: string } | null;
   userProfile: UserProfile | null;
@@ -45,15 +47,23 @@ export async function findUserProfileInFirestore(
   uid?: string
 ): Promise<UserProfile | null> {
   try {
+    const cleanInput = identifier.trim().toLowerCase();
+    const isRanjit = cleanInput.includes('ranjit');
+
     // 1. Direct document lookup by UID
     if (uid) {
       const snap = await getDoc(doc(db, 'users', uid));
       if (snap.exists()) {
-        return { id: snap.id, ...snap.data() } as UserProfile;
+        const found = { id: snap.id, ...snap.data() } as UserProfile;
+        if (isRanjit || (found.name && found.name.toLowerCase().includes('ranjit'))) {
+          found.clientId = 'CL-AIRINDIA';
+          found.assignedClientIds = ['CL-AIRINDIA', 'Air India Sats', 'air_india_sats', 'Air India SATS', 'CL-02'];
+          found.name = 'Ranjit';
+        }
+        return found;
       }
     }
 
-    const cleanInput = identifier.trim().toLowerCase();
     if (!cleanInput) return null;
 
     const safeUid = `local_user_${cleanInput.replace(/[^a-z0-9]/g, '_')}`;
@@ -70,25 +80,42 @@ export async function findUserProfileInFirestore(
       allUsers.push({ id: dSnap.id, ...dSnap.data() } as UserProfile);
     });
 
+    let matched: UserProfile | null = null;
+
     // Priority matching:
     // A. Explicit email match
     const byEmail = allUsers.find(u => (u.email || '').trim().toLowerCase() === cleanInput);
-    if (byEmail) return byEmail;
+    if (byEmail) matched = byEmail;
 
     // B. Explicit name match (e.g. "Ranjit" or "ranjit")
-    const byName = allUsers.find(u => (u.name || '').trim().toLowerCase() === cleanInput);
-    if (byName) return byName;
+    if (!matched) {
+      const byName = allUsers.find(u => (u.name || '').trim().toLowerCase() === cleanInput);
+      if (byName) matched = byName;
+    }
 
     // C. Name contains cleanInput (e.g. "ranjit" in "Ranjit Kumar" or email prefix)
-    const byNamePartial = allUsers.find(u => {
-      const uName = (u.name || '').trim().toLowerCase();
-      const uEmail = (u.email || '').trim().toLowerCase();
-      return uName.includes(cleanInput) || uEmail.includes(cleanInput) || cleanInput.includes(uName);
-    });
-    if (byNamePartial) return byNamePartial;
+    if (!matched) {
+      const byNamePartial = allUsers.find(u => {
+        const uName = (u.name || '').trim().toLowerCase();
+        const uEmail = (u.email || '').trim().toLowerCase();
+        return uName.includes(cleanInput) || uEmail.includes(cleanInput) || cleanInput.includes(uName);
+      });
+      if (byNamePartial) matched = byNamePartial;
+    }
 
     // Fallback to candidateSafeProfile if found
-    if (candidateSafeProfile) return candidateSafeProfile;
+    if (!matched && candidateSafeProfile) {
+      matched = candidateSafeProfile;
+    }
+
+    if (matched) {
+      if (isRanjit || (matched.name && matched.name.toLowerCase().includes('ranjit')) || (matched.email && matched.email.toLowerCase().includes('ranjit'))) {
+        matched.name = 'Ranjit';
+        matched.clientId = 'CL-AIRINDIA';
+        matched.assignedClientIds = ['CL-AIRINDIA', 'Air India Sats', 'air_india_sats', 'Air India SATS', 'CL-02'];
+      }
+      return matched;
+    }
 
     return null;
   } catch (err) {
@@ -123,26 +150,32 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                                  firebaseUser.email === 'kumarailesh007@gmail.com' ||
                                  firebaseUser.email === 'admin@fleet.com';
 
+      const isRanjit = (emailOrName || '').toLowerCase().includes('ranjit');
+
       let defaultClient = 'all';
       if (!isDefaultAdminEmail) {
-        try {
-          const clientsSnap = await getDocs(collection(db, 'clients'));
-          if (!clientsSnap.empty) {
-            const firstClient = clientsSnap.docs[0].data() as Client;
-            defaultClient = firstClient.clientId || firstClient.clientName || 'CL-01';
+        if (isRanjit) {
+          defaultClient = 'CL-AIRINDIA';
+        } else {
+          try {
+            const clientsSnap = await getDocs(collection(db, 'clients'));
+            if (!clientsSnap.empty) {
+              const firstClient = clientsSnap.docs[0].data() as Client;
+              defaultClient = firstClient.clientId || firstClient.clientName || 'CL-01';
+            }
+          } catch (e) {
+            defaultClient = 'CL-01';
           }
-        } catch (e) {
-          defaultClient = 'CL-01';
         }
       }
 
       const defaultProfile: UserProfile = {
         uid: firebaseUser.uid,
-        name: firebaseUser.displayName || (firebaseUser.email ? firebaseUser.email.split('@')[0] : 'Fleet User'),
+        name: isRanjit ? 'Ranjit' : (firebaseUser.displayName || (firebaseUser.email ? firebaseUser.email.split('@')[0] : 'Fleet User')),
         email: firebaseUser.email || '',
         role: isDefaultAdminEmail ? 'admin' : 'user',
         clientId: defaultClient,
-        assignedClientIds: [defaultClient],
+        assignedClientIds: isRanjit ? ['CL-AIRINDIA', 'Air India Sats', 'air_india_sats', 'Air India SATS', 'CL-02'] : [defaultClient],
         permissions: {
           viewCabs: true,
           viewDrivers: true,
@@ -164,11 +197,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   };
 
   useEffect(() => {
+    // Run background client and user validation
+    ensureCompleteDriversDataset().catch(err => console.warn('Init dataset error:', err));
+
     // Check if there is a local session stored
     const storedSession = localStorage.getItem(LOCAL_STORAGE_KEY);
     if (storedSession) {
       try {
-        const parsedProfile: UserProfile = JSON.parse(storedSession);
+        let parsedProfile: UserProfile = JSON.parse(storedSession);
+        if (parsedProfile.name?.toLowerCase().includes('ranjit') || parsedProfile.email?.toLowerCase().includes('ranjit')) {
+          parsedProfile.name = 'Ranjit';
+          parsedProfile.clientId = 'CL-AIRINDIA';
+          parsedProfile.assignedClientIds = ['CL-AIRINDIA', 'Air India Sats', 'air_india_sats', 'Air India SATS', 'CL-02'];
+          localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(parsedProfile));
+        }
+
         setUserProfile(parsedProfile);
         setUser({
           uid: parsedProfile.uid,
@@ -211,6 +254,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
                            sanitizedEmail === 'kumarailesh007@gmail.com' || 
                            role === 'admin';
     const computedRole = isPrimaryAdmin ? 'admin' : (role || 'user');
+    const isRanjit = sanitizedEmail.includes('ranjit') || cleanInput.toLowerCase() === 'ranjit';
 
     try {
       // 1. Check if user already exists in Firestore users collection
@@ -220,7 +264,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
       if (existingUser) {
         profile = existingUser;
-        if (profile.role === 'user') {
+        if (isRanjit) {
+          profile.name = 'Ranjit';
+          profile.clientId = 'CL-AIRINDIA';
+          profile.assignedClientIds = ['CL-AIRINDIA', 'Air India Sats', 'air_india_sats', 'Air India SATS', 'CL-02'];
+        } else if (profile.role === 'user') {
           if (!profile.clientId && profile.assignedClientIds?.[0]) {
             profile.clientId = profile.assignedClientIds[0];
           }
@@ -230,7 +278,7 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         }
       } else {
         // Find default client from clients collection
-        let defaultBoundClientId = computedRole === 'admin' ? 'all' : '';
+        let defaultBoundClientId = computedRole === 'admin' ? 'all' : (isRanjit ? 'CL-AIRINDIA' : '');
         if (!defaultBoundClientId) {
           try {
             const clientsSnap = await getDocs(collection(db, 'clients'));
@@ -248,11 +296,11 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
         const safeUid = `local_user_${sanitizedEmail.replace(/[^a-z0-9]/g, '_')}`;
         profile = {
           uid: safeUid,
-          name: customName || (computedRole === 'admin' ? 'Fleet System Admin' : (cleanInput.includes('@') ? cleanInput.split('@')[0] : cleanInput)),
+          name: isRanjit ? 'Ranjit' : (customName || (computedRole === 'admin' ? 'Fleet System Admin' : (cleanInput.includes('@') ? cleanInput.split('@')[0] : cleanInput))),
           email: sanitizedEmail.includes('@') ? sanitizedEmail : `${sanitizedEmail}@fleet.local`,
           role: computedRole,
           clientId: defaultBoundClientId,
-          assignedClientIds: [defaultBoundClientId],
+          assignedClientIds: isRanjit ? ['CL-AIRINDIA', 'Air India Sats', 'air_india_sats', 'Air India SATS', 'CL-02'] : [defaultBoundClientId],
           permissions: {
             viewCabs: true,
             viewDrivers: true,

@@ -53,7 +53,8 @@ export async function cleanUnwantedClients(): Promise<void> {
     const unwantedNames = ['tech corp', 'techcorp', 'techcorp inc', 'global logistics', 'alpha retail', 'apex tech', 'apex tech solutions', 'client-apex', 'dummy'];
     const batch = writeBatch(db);
     let hasEdits = false;
-    let hasAirIndia = false;
+    let hasAirIndiaSats = false;
+    let hasAirportT3 = false;
 
     clientsSnap.forEach(dDoc => {
       const cData = dDoc.data();
@@ -63,16 +64,29 @@ export async function cleanUnwantedClients(): Promise<void> {
         batch.delete(dDoc.ref);
         hasEdits = true;
       }
-      if (cName.includes('air india')) {
-        hasAirIndia = true;
+      if (cName.includes('air india') || cId.includes('airindia') || cName.includes('sats')) {
+        hasAirIndiaSats = true;
+      }
+      if (cName.includes('airport t3') || cId === 'cl-01' || cName.includes('terminal 3')) {
+        hasAirportT3 = true;
       }
     });
 
-    if (!hasAirIndia) {
+    if (!hasAirIndiaSats) {
       const newRef = doc(collection(db, 'clients'));
       batch.set(newRef, {
-        clientName: 'Air India T3',
+        clientName: 'Air India Sats',
         clientId: 'CL-AIRINDIA',
+        createdAt: new Date().toISOString()
+      });
+      hasEdits = true;
+    }
+
+    if (!hasAirportT3) {
+      const t3Ref = doc(collection(db, 'clients'));
+      batch.set(t3Ref, {
+        clientName: 'Airport T3',
+        clientId: 'CL-01',
         createdAt: new Date().toISOString()
       });
       hasEdits = true;
@@ -86,6 +100,58 @@ export async function cleanUnwantedClients(): Promise<void> {
   }
 }
 
+export async function ensureDefaultUserAccounts(): Promise<void> {
+  try {
+    const batch = writeBatch(db);
+    let hasEdits = false;
+
+    // 1. Ensure Ranjit profile bound to Air India Sats
+    const ranjitDocRef = doc(db, 'users', 'local_user_ranjit');
+    const ranjitEmailRef = doc(db, 'users', 'local_user_ranjit_fleet_local');
+    const ranjitProfile = {
+      uid: 'local_user_ranjit',
+      name: 'Ranjit',
+      email: 'ranjit@fleet.local',
+      role: 'user',
+      clientId: 'CL-AIRINDIA',
+      assignedClientIds: ['CL-AIRINDIA', 'Air India Sats', 'air_india_sats', 'Air India SATS', 'CL-02'],
+      permissions: {
+        viewCabs: true,
+        viewDrivers: true,
+        viewExpiryAlerts: true,
+        uploadDataSheets: true,
+      },
+      updatedAt: new Date().toISOString(),
+      createdBy: 'system',
+    };
+
+    batch.set(ranjitDocRef, ranjitProfile, { merge: true });
+    batch.set(ranjitEmailRef, ranjitProfile, { merge: true });
+    hasEdits = true;
+
+    // 2. Also check if any existing user doc has name "Ranjit" and update client if it was CL-01
+    const usersSnap = await getDocs(collection(db, 'users'));
+    usersSnap.forEach(uDoc => {
+      const uData = uDoc.data();
+      const uName = (uData.name || '').trim().toLowerCase();
+      const uEmail = (uData.email || '').trim().toLowerCase();
+      if ((uName === 'ranjit' || uEmail.includes('ranjit')) && uData.clientId === 'CL-01') {
+        batch.set(uDoc.ref, {
+          clientId: 'CL-AIRINDIA',
+          assignedClientIds: ['CL-AIRINDIA', 'Air India Sats', 'air_india_sats', 'Air India SATS', 'CL-02'],
+        }, { merge: true });
+        hasEdits = true;
+      }
+    });
+
+    if (hasEdits) {
+      await batch.commit();
+    }
+  } catch (err) {
+    console.error('Error ensuring default user accounts:', err);
+  }
+}
+
 export async function seedCompleteDriversDataset(): Promise<{ activeCount: number; inactiveCount: number }> {
   // NO-OP: Seeding synthetic/dummy drivers disabled as per user instruction.
   // Purge any legacy dummy records instead.
@@ -96,6 +162,7 @@ export async function seedCompleteDriversDataset(): Promise<{ activeCount: numbe
 export async function ensureCompleteDriversDataset(): Promise<void> {
   try {
     await cleanUnwantedClients();
+    await ensureDefaultUserAccounts();
     await purgeAllDummyData();
   } catch (err) {
     console.error('Data check failed:', err);

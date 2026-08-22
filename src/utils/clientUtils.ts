@@ -122,18 +122,23 @@ export function resolveUserClientScope(
  * Checks whether a given record (cab, driver, trip, client) belongs to the user's accessible client scope.
  */
 export function isRecordAccessible(
-  record: { clientId?: string; clientName?: string; client?: string; name?: string },
+  record: { clientId?: string; clientName?: string; client?: string; clientOrg?: string; assignedClientId?: string },
   scope: UserClientScope
 ): boolean {
   if (scope.isAll) return true;
-  if (scope.allowedKeys.size === 0) return true;
+  if (scope.allowedKeys.size === 0) return false;
 
   const rawValues = [
     record.clientId,
     record.clientName,
     record.client,
-    record.name
+    record.clientOrg,
+    record.assignedClientId,
   ].filter(Boolean) as string[];
+
+  if (rawValues.length === 0) {
+    return false;
+  }
 
   for (const val of rawValues) {
     const valLower = val.trim().toLowerCase();

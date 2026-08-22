@@ -45,10 +45,19 @@ export const MyAccessPanel: React.FC<MyAccessPanelProps> = ({ isOpen, onClose })
 
   if (!isOpen || !userProfile) return null;
 
-  const isAllClients = userProfile.assignedClientIds?.includes('all');
+  const isAllClients = userProfile.assignedClientIds?.includes('all') || userProfile.role === 'admin';
+  const rawClientKeys = (userProfile.assignedClientIds?.length ? userProfile.assignedClientIds : [userProfile.clientId]).filter(Boolean);
   const assignedClientNames = isAllClients
     ? ['All Clients (Global Access)']
-    : userProfile.assignedClientIds?.map(cid => clientsList.find(c => c.clientId === cid)?.clientName || cid);
+    : rawClientKeys.map(cid => {
+        const found = clientsList.find(c => 
+          c.clientId.toLowerCase() === cid.toLowerCase() || 
+          c.clientName.toLowerCase() === cid.toLowerCase()
+        );
+        if (found) return `${found.clientName} (${found.clientId})`;
+        if (cid.toLowerCase().includes('air')) return 'Air India Sats (CL-AIRINDIA)';
+        return cid;
+      });
 
   return (
     <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4 z-50 overflow-y-auto">

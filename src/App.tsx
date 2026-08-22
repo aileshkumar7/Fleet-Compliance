@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useMemo } from 'react';
 import { 
   Database, 
   ShieldCheck, 
@@ -43,6 +43,7 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<'dashboard' | 'alerts' | 'uploader' | 'tripUploader' | 'tripAnalytics' | 'drivers' | 'cabs' | 'clients' | 'logs' | 'reportLogs' | 'users' | 'userLogs'>('dashboard');
   const [alertCount, setAlertCount] = useState<number>(0);
   const [isMyAccessOpen, setIsMyAccessOpen] = useState<boolean>(false);
+  const [availableClients, setAvailableClients] = useState<Client[]>([]);
 
   // Expiry alerts real-time counter
   useEffect(() => {
@@ -66,6 +67,7 @@ export default function App() {
     const unsubClients = onSnapshot(collection(db, 'clients'), (snap) => {
       clientsList = [];
       snap.forEach(doc => clientsList.push({ id: doc.id, ...doc.data() } as Client));
+      setAvailableClients(clientsList);
       updateCounts();
     });
 
@@ -104,6 +106,20 @@ export default function App() {
     };
   }, [user, userProfile, isAdmin]);
 
+  const activeClientDisplay = useMemo(() => {
+    if (isAdmin || userProfile?.assignedClientIds?.includes('all')) {
+      return 'All Clients (Global Access)';
+    }
+    const cid = userProfile?.clientId || userProfile?.assignedClientIds?.[0] || '';
+    const matched = availableClients.find(c => 
+      c.clientId.toLowerCase() === cid.toLowerCase() || 
+      c.clientName.toLowerCase() === cid.toLowerCase()
+    );
+    if (matched) return matched.clientName;
+    if (cid.toLowerCase().includes('air')) return 'Air India Sats';
+    return cid || 'Air India Sats';
+  }, [isAdmin, userProfile, availableClients]);
+
   // Loading state guard
   if (isLoading) {
     return (
@@ -127,7 +143,7 @@ export default function App() {
       <aside className="hidden lg:flex w-64 bg-[#1e293b] text-white flex-col justify-between shrink-0 border-r border-slate-800">
         <div>
           {/* Header Brand */}
-          <div className="p-6 border-b border-slate-700/60">
+          <div className="p-6 border-b border-slate-700/60 space-y-4">
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 bg-blue-600 rounded-xl flex items-center justify-center font-bold text-lg shadow-md text-white">
                 <Truck className="w-5 h-5" />
@@ -137,6 +153,23 @@ export default function App() {
                 <span className="text-[10px] text-slate-400 font-mono">
                   {isAdmin ? 'ADMIN CONSOLE' : 'OPERATIONS PORTAL'}
                 </span>
+              </div>
+            </div>
+
+            {/* Sidebar Active User Chip */}
+            <div className="bg-slate-800/90 rounded-xl p-3 border border-slate-700/80 space-y-1">
+              <div className="flex items-center justify-between">
+                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400">Current User</span>
+                <span className={`text-[9px] font-black uppercase px-1.5 py-0.2 rounded-full ${
+                  isAdmin ? 'bg-amber-500/20 text-amber-300 border border-amber-400/30' : 'bg-blue-500/20 text-blue-300 border border-blue-400/30'
+                }`}>
+                  {isAdmin ? 'Admin' : 'Operations'}
+                </span>
+              </div>
+              <p className="text-sm font-bold text-white truncate">{userProfile?.name || 'User'}</p>
+              <div className="flex items-center gap-1 text-[11px] text-slate-300 truncate">
+                <Building2 className="w-3 h-3 text-blue-400 shrink-0" />
+                <span className="truncate">{activeClientDisplay}</span>
               </div>
             </div>
           </div>
@@ -365,6 +398,31 @@ export default function App() {
           </div>
 
           <div className="flex items-center gap-3">
+            {/* User Profile Identity Capsule */}
+            <div className="flex items-center gap-2.5 bg-slate-50 border border-slate-200/90 px-3 py-1.5 rounded-full shadow-2xs">
+              <div className={`w-7 h-7 rounded-full flex items-center justify-center text-xs font-black shadow-xs ${
+                isAdmin ? 'bg-amber-500 text-white' : 'bg-blue-600 text-white'
+              }`}>
+                {userProfile?.name ? userProfile.name.slice(0, 2).toUpperCase() : 'US'}
+              </div>
+              <div className="flex flex-col text-left">
+                <div className="flex items-center gap-1.5">
+                  <span className="text-xs font-bold text-slate-800 leading-none">
+                    {userProfile?.name || 'User'}
+                  </span>
+                  <span className={`text-[9px] font-extrabold uppercase px-1.5 py-0.2 rounded-full ${
+                    isAdmin ? 'bg-amber-100 text-amber-800 border border-amber-300' : 'bg-blue-100 text-blue-800 border border-blue-200'
+                  }`}>
+                    {isAdmin ? 'Global Admin' : 'Operations'}
+                  </span>
+                </div>
+                <span className="text-[10px] text-slate-500 font-medium leading-tight flex items-center gap-1 mt-0.5">
+                  <Building2 className="w-2.5 h-2.5 text-blue-600" />
+                  <span className="truncate max-w-[130px]">{activeClientDisplay}</span>
+                </span>
+              </div>
+            </div>
+
             {/* My Access Button */}
             <button
               onClick={() => setIsMyAccessOpen(true)}
