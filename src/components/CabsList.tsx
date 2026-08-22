@@ -260,7 +260,7 @@ export const CabsList: React.FC = () => {
                   const isActive = (c.status || '').toLowerCase() === 'active';
                   const audit = analyzeCabExpiry(c);
                   return (
-                    <tr key={c.id} className={`transition-colors ${!isActive ? 'bg-amber-50/20 hover:bg-amber-50/40' : audit.hasAlert ? 'bg-rose-50/30 hover:bg-rose-50/50' : 'hover:bg-slate-50/80'}`}>
+                    <tr key={c.id} className={`transition-colors ${audit.hasAlert ? (isActive ? 'bg-rose-50/30 hover:bg-rose-50/50' : 'bg-rose-50/40 hover:bg-rose-50/60') : (!isActive ? 'bg-amber-50/20 hover:bg-amber-50/40' : 'hover:bg-slate-50/80')}`}>
                       <td className="px-6 py-4">
                         <div>
                           <p className="font-bold text-slate-900 text-sm font-mono">{c.registrationNumber || 'N/A'}</p>
@@ -300,7 +300,7 @@ export const CabsList: React.FC = () => {
                           <span className="text-slate-400">PUC / Pollution: </span>
                           <span className="font-mono text-slate-700 font-medium">{c.pollutionCertificateExpiryDate || 'N/A'}</span>
                         </div>
-                        {isActive && audit.hasAlert && (
+                        {audit.hasAlert && (
                           <div className="mt-1 space-y-0.5">
                             {audit.alerts.map((al, idx) => (
                               <div key={idx} className="text-[10px] font-bold font-mono text-rose-700 flex items-center gap-1">

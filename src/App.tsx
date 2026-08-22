@@ -62,11 +62,8 @@ export default function App() {
         ? driversList
         : driversList.filter(d => allowedClientIds.includes(d.clientId) || allowedClientIds.includes(d.clientName));
 
-      const activeFilteredCabs = filteredCabs.filter(c => (c.status || '').toLowerCase() === 'active');
-      const activeFilteredDrivers = filteredDrivers.filter(d => (d.status || '').toLowerCase() === 'active');
-
-      const cAlerts = activeFilteredCabs.map(analyzeCabExpiry).filter(a => a.hasAlert).length;
-      const dAlerts = activeFilteredDrivers.map(analyzeDriverExpiry).filter(a => a.hasAlert).length;
+      const cAlerts = filteredCabs.map(analyzeCabExpiry).filter(a => a.hasAlert).length;
+      const dAlerts = filteredDrivers.map(analyzeDriverExpiry).filter(a => a.hasAlert).length;
       setAlertCount(cAlerts + dAlerts);
     };
 

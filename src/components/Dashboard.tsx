@@ -196,17 +196,30 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const activeDrivers = filteredDrivers.filter(d => (d.status || '').toLowerCase() === 'active');
   const inactiveDrivers = filteredDrivers.filter(d => (d.status || '').toLowerCase() === 'inactive');
 
-  // Compute document expiry alerts strictly for ACTIVE cabs and ACTIVE drivers
-  const cabAlertsCount = scopedCabs
+  // Compute document expiry alerts across all scoped cabs and drivers (Active & Inactive)
+  const activeCabAlertsCount = scopedCabs
     .filter(c => (c.status || '').toLowerCase() === 'active')
     .map(analyzeCabExpiry)
     .filter(a => a.hasAlert).length;
+
+  const inactiveCabAlertsCount = scopedCabs
+    .filter(c => (c.status || '').toLowerCase() === 'inactive')
+    .map(analyzeCabExpiry)
+    .filter(a => a.hasAlert).length;
+
+  const cabAlertsCount = activeCabAlertsCount + inactiveCabAlertsCount;
     
-  const driverAlertsCount = scopedDrivers
+  const activeDriverAlertsCount = scopedDrivers
     .filter(d => (d.status || '').toLowerCase() === 'active')
     .map(analyzeDriverExpiry)
     .filter(a => a.hasAlert).length;
+
+  const inactiveDriverAlertsCount = scopedDrivers
+    .filter(d => (d.status || '').toLowerCase() === 'inactive')
+    .map(analyzeDriverExpiry)
+    .filter(a => a.hasAlert).length;
     
+  const driverAlertsCount = activeDriverAlertsCount + inactiveDriverAlertsCount;
   const totalAlertsCount = cabAlertsCount + driverAlertsCount;
 
   // Calculate days since last Excel upload for weekly reminder
@@ -463,15 +476,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
           <div>
             <div className="text-2xl font-black text-rose-900 tracking-tight font-mono">{driverAlertsCount}</div>
-            <p className="text-[10px] text-rose-700 font-semibold flex items-center gap-1 mt-0.5">
-              <AlertCircle className="w-3 h-3 text-rose-600" />
-              <span>Active Doc Check</span>
+            <p className="text-[9px] text-rose-700 font-semibold flex items-center gap-1 mt-0.5 truncate">
+              <AlertCircle className="w-3 h-3 text-rose-600 shrink-0" />
+              <span>{activeDriverAlertsCount} Act • {inactiveDriverAlertsCount} Inact</span>
             </p>
           </div>
           <div className="w-full bg-rose-200/60 h-1 rounded-full overflow-hidden">
             <div 
               className="bg-rose-600 h-full rounded-full transition-all duration-500" 
-              style={{ width: `${activeDriversCount ? Math.round((driverAlertsCount / activeDriversCount) * 100) : 0}%` }}
+              style={{ width: `${totalDriversCount ? Math.round((driverAlertsCount / totalDriversCount) * 100) : 0}%` }}
             ></div>
           </div>
         </div>
@@ -554,15 +567,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
           </div>
           <div>
             <div className="text-2xl font-black text-rose-900 tracking-tight font-mono">{cabAlertsCount}</div>
-            <p className="text-[10px] text-rose-700 font-semibold flex items-center gap-1 mt-0.5">
-              <AlertCircle className="w-3 h-3 text-rose-600" />
-              <span>Active Doc Check</span>
+            <p className="text-[9px] text-rose-700 font-semibold flex items-center gap-1 mt-0.5 truncate">
+              <AlertCircle className="w-3 h-3 text-rose-600 shrink-0" />
+              <span>{activeCabAlertsCount} Act • {inactiveCabAlertsCount} Inact</span>
             </p>
           </div>
           <div className="w-full bg-rose-200/60 h-1 rounded-full overflow-hidden">
             <div 
               className="bg-rose-600 h-full rounded-full transition-all duration-500" 
-              style={{ width: `${activeCabsCount ? Math.round((cabAlertsCount / activeCabsCount) * 100) : 0}%` }}
+              style={{ width: `${totalCabsCount ? Math.round((cabAlertsCount / totalCabsCount) * 100) : 0}%` }}
             ></div>
           </div>
         </div>
@@ -771,54 +784,89 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {inactiveCabs.map((cab) => (
-                    <div
-                      key={cab.id}
-                      onClick={() => setSelectedRecord({ record: cab, type: 'cab' })}
-                      className="bg-white rounded-2xl border border-amber-200/80 shadow-2xs p-5 hover:shadow-md hover:border-amber-400 transition-all space-y-3 cursor-pointer group"
-                    >
-                      <div className="flex items-start justify-between gap-3">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h4 className="font-bold text-slate-900 group-hover:text-amber-700 transition-colors text-base font-mono">{cab.registrationNumber || 'N/A'}</h4>
-                            <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200">
-                              {cab.etsVehicleId}
-                            </span>
-                          </div>
-                          <p className="text-xs font-semibold text-slate-500 mt-0.5">{cab.vehicleType || 'Standard Fleet Vehicle'}</p>
-                        </div>
-                        <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0">
-                          <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
-                          <span>{cab.overallComplianceStatus || 'Non-Compliant'}</span>
-                        </span>
-                      </div>
-
-                      <div className="pt-2 border-t border-slate-100 space-y-2 text-xs">
-                        <div className="flex items-center justify-between text-slate-700">
-                          <div className="flex items-center gap-1.5 font-medium">
-                            <span className="text-slate-400">Assigned Driver:</span>
-                            <span className="font-bold text-slate-800">{cab.driverName || 'Unassigned'}</span>
-                          </div>
-                          {cab.deactivationDate && (
-                            <div className="flex items-center gap-1 text-[11px] text-amber-800 font-mono font-semibold">
-                              <Calendar className="w-3 h-3 text-amber-600" />
-                              <span>Deactivated: {cab.deactivationDate}</span>
+                  {inactiveCabs.map((cab) => {
+                    const expiryAudit = analyzeCabExpiry(cab);
+                    return (
+                      <div
+                        key={cab.id}
+                        onClick={() => setSelectedRecord({ record: cab, type: 'cab' })}
+                        className={`bg-white rounded-2xl border shadow-2xs p-5 hover:shadow-md transition-all space-y-3 cursor-pointer group ${
+                          expiryAudit.hasAlert 
+                            ? 'border-rose-300 ring-2 ring-rose-500/20 hover:border-rose-400' 
+                            : 'border-amber-200/80 hover:border-amber-400'
+                        }`}
+                      >
+                        <div className="flex items-start justify-between gap-3">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-bold text-slate-900 group-hover:text-amber-700 transition-colors text-base font-mono">{cab.registrationNumber || 'N/A'}</h4>
+                              <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200">
+                                {cab.etsVehicleId}
+                              </span>
                             </div>
-                          )}
+                            <p className="text-xs font-semibold text-slate-500 mt-0.5">{cab.vehicleType || 'Standard Fleet Vehicle'}</p>
+                          </div>
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider">
+                              <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+                              <span>{cab.overallComplianceStatus || 'Inactive'}</span>
+                            </span>
+
+                            {/* Alert Badge if Expiry Exists */}
+                            {expiryAudit.hasAlert && (
+                              <span className="inline-flex items-center gap-1.5 bg-rose-600 text-white px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider shadow-2xs animate-pulse">
+                                <span className="relative flex h-1.5 w-1.5">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-200 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-white"></span>
+                                </span>
+                                <span>{expiryAudit.worstStatus === 'expired' ? 'EXPIRED DOCS' : 'EXPIRING SOON'}</span>
+                              </span>
+                            )}
+                          </div>
                         </div>
 
-                        {/* Inactivity Reason / Comments */}
-                        <div className="p-3 bg-amber-50/70 border border-amber-100 rounded-xl space-y-1">
-                          <span className="text-[10px] font-bold text-amber-900 uppercase tracking-wider block">
-                            Inactivity Reason
-                          </span>
-                          <p className="text-xs text-amber-950 font-medium leading-relaxed">
-                            {cab.comments || 'No specific inactivity comment provided.'}
-                          </p>
+                        {/* Triggered Expiry Alerts Messages */}
+                        {expiryAudit.hasAlert && (
+                          <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl space-y-1">
+                            {expiryAudit.alerts.map((al, idx) => (
+                              <div key={idx} className="flex items-center justify-between text-[11px] font-semibold text-rose-900">
+                                <span className="flex items-center gap-1">
+                                  <AlertTriangle className="w-3 h-3 text-rose-600" />
+                                  <span>{al.docName}:</span>
+                                </span>
+                                <span className="font-mono font-bold">{al.message}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        <div className="pt-2 border-t border-slate-100 space-y-2 text-xs">
+                          <div className="flex items-center justify-between text-slate-700">
+                            <div className="flex items-center gap-1.5 font-medium">
+                              <span className="text-slate-400">Assigned Driver:</span>
+                              <span className="font-bold text-slate-800">{cab.driverName || 'Unassigned'}</span>
+                            </div>
+                            {cab.deactivationDate && (
+                              <div className="flex items-center gap-1 text-[11px] text-amber-800 font-mono font-semibold">
+                                <Calendar className="w-3 h-3 text-amber-600" />
+                                <span>Deactivated: {cab.deactivationDate}</span>
+                              </div>
+                            )}
+                          </div>
+
+                          {/* Inactivity Reason / Comments */}
+                          <div className="p-3 bg-amber-50/70 border border-amber-100 rounded-xl space-y-1">
+                            <span className="text-[10px] font-bold text-amber-900 uppercase tracking-wider block">
+                              Inactivity Reason
+                            </span>
+                            <p className="text-xs text-amber-950 font-medium leading-relaxed">
+                              {cab.comments || 'No specific inactivity comment provided.'}
+                            </p>
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -953,11 +1001,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 <div className="space-y-3">
                   {inactiveDrivers.map((driver) => {
                     const cabNo = getDriverCabNumber(driver, cabs);
+                    const expiryAudit = analyzeDriverExpiry(driver);
                     return (
                       <div
                         key={driver.id}
                         onClick={() => setSelectedRecord({ record: driver, type: 'driver' })}
-                        className="bg-white rounded-2xl border border-rose-200/80 shadow-2xs p-5 hover:shadow-md hover:border-rose-400 transition-all space-y-3 cursor-pointer group"
+                        className={`bg-white rounded-2xl border shadow-2xs p-5 hover:shadow-md transition-all space-y-3 cursor-pointer group ${
+                          expiryAudit.hasAlert 
+                            ? 'border-rose-300 ring-2 ring-rose-500/20 hover:border-rose-400' 
+                            : 'border-rose-200/80 hover:border-rose-400'
+                        }`}
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div>
@@ -966,11 +1019,39 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               DL: <span className="font-semibold text-slate-800">{driver.driverLicenseNumber || 'N/A'}</span>
                             </p>
                           </div>
-                          <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider shrink-0">
-                            <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
-                            <span>{driver.overallComplianceStatus || 'Non-Compliant'}</span>
-                          </span>
+                          <div className="flex flex-col items-end gap-1 shrink-0">
+                            <span className="inline-flex items-center gap-1 bg-amber-50 text-amber-700 border border-amber-200 text-[11px] font-bold px-2.5 py-1 rounded-full uppercase tracking-wider">
+                              <ShieldAlert className="w-3.5 h-3.5 text-amber-600" />
+                              <span>{driver.overallComplianceStatus || 'Inactive'}</span>
+                            </span>
+
+                            {/* Alert Badge if Expiry Exists */}
+                            {expiryAudit.hasAlert && (
+                              <span className="inline-flex items-center gap-1.5 bg-rose-600 text-white px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider shadow-2xs animate-pulse">
+                                <span className="relative flex h-1.5 w-1.5">
+                                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-200 opacity-75"></span>
+                                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-white"></span>
+                                </span>
+                                <span>{expiryAudit.worstStatus === 'expired' ? 'EXPIRED DOCS' : 'EXPIRING SOON'}</span>
+                              </span>
+                            )}
+                          </div>
                         </div>
+
+                        {/* Triggered Expiry Alerts Messages */}
+                        {expiryAudit.hasAlert && (
+                          <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl space-y-1">
+                            {expiryAudit.alerts.map((al, idx) => (
+                              <div key={idx} className="flex items-center justify-between text-[11px] font-semibold text-rose-900">
+                                <span className="flex items-center gap-1">
+                                  <AlertTriangle className="w-3 h-3 text-rose-600" />
+                                  <span>{al.docName}:</span>
+                                </span>
+                                <span className="font-mono font-bold">{al.message}</span>
+                              </div>
+                            ))}
+                          </div>
+                        )}
 
                         <div className="pt-2 border-t border-slate-100 space-y-2 text-xs">
                           <div className="flex items-center justify-between text-slate-700 flex-wrap gap-2">
@@ -990,17 +1071,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             )}
                           </div>
 
-                        {/* Inactivity Reason / Comments */}
-                        <div className="p-3 bg-rose-50/70 border border-rose-100 rounded-xl space-y-1">
-                          <span className="text-[10px] font-bold text-rose-900 uppercase tracking-wider block">
-                            Inactivity Reason
-                          </span>
-                          <p className="text-xs text-rose-950 font-medium leading-relaxed">
-                            {driver.comments || 'No specific inactivity comment provided.'}
-                          </p>
+                          {/* Inactivity Reason / Comments */}
+                          <div className="p-3 bg-rose-50/70 border border-rose-100 rounded-xl space-y-1">
+                            <span className="text-[10px] font-bold text-rose-900 uppercase tracking-wider block">
+                              Inactivity Reason
+                            </span>
+                            <p className="text-xs text-rose-950 font-medium leading-relaxed">
+                              {driver.comments || 'No specific inactivity comment provided.'}
+                            </p>
+                          </div>
                         </div>
                       </div>
-                    </div>
                     );
                   })}
                 </div>

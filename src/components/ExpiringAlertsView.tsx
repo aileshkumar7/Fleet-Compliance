@@ -45,6 +45,7 @@ export const ExpiringAlertsView: React.FC = () => {
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [filterType, setFilterType] = useState<'all' | 'expired' | 'expiring_soon'>('all');
   const [categoryTab, setCategoryTab] = useState<'all' | 'cabs' | 'drivers'>('all');
+  const [fleetStatusFilter, setFleetStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
   const [showReportModal, setShowReportModal] = useState<boolean>(false);
 
   useEffect(() => {
@@ -121,16 +122,22 @@ export const ExpiringAlertsView: React.FC = () => {
            (recordClientId || '').toLowerCase() === selectedClient.toLowerCase();
   };
 
-  // Scoped Cabs & Drivers - Strictly filter to ACTIVE Cabs and ACTIVE Drivers
+  // Scoped Cabs & Drivers - Filter by client and optional fleetStatusFilter (defaults to 'all' to include Active & Inactive)
   const scopedCabs = cabs
-    .filter(c => (c.status || '').toLowerCase() === 'active')
+    .filter(c => {
+      if (fleetStatusFilter === 'all') return true;
+      return (c.status || '').toLowerCase() === fleetStatusFilter;
+    })
     .filter(c => matchClient(c.clientName, c.clientId));
     
   const scopedDrivers = drivers
-    .filter(d => (d.status || '').toLowerCase() === 'active')
+    .filter(d => {
+      if (fleetStatusFilter === 'all') return true;
+      return (d.status || '').toLowerCase() === fleetStatusFilter;
+    })
     .filter(d => matchClient(d.clientName, d.clientId));
 
-  // Analyze scoped active cabs and active drivers
+  // Analyze scoped cabs and drivers (Active + Inactive)
   const cabAnalyses: EntityExpiryAnalysis<Cab>[] = scopedCabs
     .map(analyzeCabExpiry)
     .filter(a => a.hasAlert);
@@ -143,6 +150,12 @@ export const ExpiringAlertsView: React.FC = () => {
   cabAnalyses.sort((a, b) => a.minDaysRemaining - b.minDaysRemaining);
   driverAnalyses.sort((a, b) => a.minDaysRemaining - b.minDaysRemaining);
 
+  // Active & Inactive Breakdown Counts
+  const activeCabAlerts = cabAnalyses.filter(a => (a.entity.status || '').toLowerCase() === 'active').length;
+  const inactiveCabAlerts = cabAnalyses.filter(a => (a.entity.status || '').toLowerCase() === 'inactive').length;
+  const activeDriverAlerts = driverAnalyses.filter(a => (a.entity.status || '').toLowerCase() === 'active').length;
+  const inactiveDriverAlerts = driverAnalyses.filter(a => (a.entity.status || '').toLowerCase() === 'inactive').length;
+
   // Apply filters
   const filteredCabAnalyses = cabAnalyses.filter(a => {
     const matchesSearch = matchesCabSearch(a.entity, searchTerm);
@@ -151,7 +164,7 @@ export const ExpiringAlertsView: React.FC = () => {
   });
 
   const filteredDriverAnalyses = driverAnalyses.filter(a => {
-    const matchesSearch = matchesDriverSearch(a.entity, searchTerm, scopedCabs);
+    const matchesSearch = matchesDriverSearch(a.entity, searchTerm, cabs);
     if (filterType === 'all') return matchesSearch;
     return matchesSearch && a.worstStatus === filterType;
   });
@@ -171,14 +184,14 @@ export const ExpiringAlertsView: React.FC = () => {
             <span>Document Expiry Alerts Engine</span>
           </h2>
           <p className="text-xs text-slate-500 mt-1">
-            Real-time automated audit of active cab compliance certificates & active driver verification documents.
+            Real-time automated audit across Active & Inactive Cabs compliance certificates and Driver verification documents.
           </p>
         </div>
 
         {/* Stats Badges & Download Button */}
         <div className="flex flex-wrap items-center gap-3 shrink-0">
           <div className="bg-rose-50 border border-rose-200 px-4 py-2 rounded-xl text-center">
-            <span className="text-[10px] text-rose-700 uppercase font-bold tracking-wider block">Expired (Active Fleet)</span>
+            <span className="text-[10px] text-rose-700 uppercase font-bold tracking-wider block">Expired Documents</span>
             <span className="text-lg font-black text-rose-800 font-mono">{totalExpired}</span>
           </div>
           <div className="bg-amber-50 border border-amber-200 px-4 py-2 rounded-xl text-center">
@@ -196,25 +209,25 @@ export const ExpiringAlertsView: React.FC = () => {
         </div>
       </div>
 
-      {/* Control Bar: Search, Category Tab, Expiry Status Filter */}
-      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs flex flex-col sm:flex-row items-center justify-between gap-4">
-        <div className="relative w-full sm:w-80">
+      {/* Control Bar: Search, Client Filter, Fleet Status, Category Tab, Expiry Status Filter */}
+      <div className="bg-white p-5 rounded-2xl border border-slate-200 shadow-2xs flex flex-col lg:flex-row items-center justify-between gap-4">
+        <div className="relative w-full lg:w-72">
           <Search className="w-4 h-4 absolute left-3.5 top-1/2 transform -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             value={searchTerm}
             onChange={(e) => setSearchTerm(e.target.value)}
-            placeholder="Search Cab Reg # or Driver Name / License..."
+            placeholder="Search Cab Reg # or Driver..."
             className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-9 pr-4 py-2.5 text-xs focus:ring-2 focus:ring-rose-500 focus:bg-white outline-none text-slate-800 font-medium"
           />
         </div>
 
-        <div className="flex flex-wrap items-center gap-3 w-full sm:w-auto justify-end">
+        <div className="flex flex-wrap items-center gap-2.5 w-full lg:w-auto justify-end">
           {/* Client Filter Dropdown for Admin, or locked badge for User */}
           {isAdmin ? (
             <div className="flex items-center gap-2 bg-slate-50 border border-slate-200 px-3 py-1.5 rounded-xl text-xs">
               <Building2 className="w-4 h-4 text-rose-600 shrink-0" />
-              <span className="text-slate-500 font-medium text-[11px] hidden md:inline">Client:</span>
+              <span className="text-slate-500 font-medium text-[11px] hidden xl:inline">Client:</span>
               <select
                 value={selectedClient}
                 onChange={(e) => setSelectedClient(e.target.value)}
@@ -234,23 +247,49 @@ export const ExpiringAlertsView: React.FC = () => {
               <span>Client: {userProfile?.clientId || userProfile?.assignedClientIds?.[0] || 'Bound Client'}</span>
             </div>
           )}
+
+          {/* Fleet Status Filter (Active / Inactive / All) */}
+          <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600">
+            <button
+              onClick={() => setFleetStatusFilter('all')}
+              className={`px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${fleetStatusFilter === 'all' ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-500 hover:text-slate-800'}`}
+              title="Show alerts for both Active & Inactive fleet"
+            >
+              All Status
+            </button>
+            <button
+              onClick={() => setFleetStatusFilter('active')}
+              className={`px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${fleetStatusFilter === 'active' ? 'bg-emerald-600 text-white shadow-2xs font-bold' : 'text-slate-500 hover:text-slate-800'}`}
+              title="Show alerts only for Active fleet"
+            >
+              Active
+            </button>
+            <button
+              onClick={() => setFleetStatusFilter('inactive')}
+              className={`px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${fleetStatusFilter === 'inactive' ? 'bg-amber-600 text-white shadow-2xs font-bold' : 'text-slate-500 hover:text-slate-800'}`}
+              title="Show alerts only for Inactive fleet"
+            >
+              Inactive
+            </button>
+          </div>
+
           {/* Category Switcher */}
           <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600">
             <button
               onClick={() => setCategoryTab('all')}
-              className={`px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${categoryTab === 'all' ? 'bg-white text-slate-900 shadow-2xs' : 'text-slate-500 hover:text-slate-800'}`}
+              className={`px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${categoryTab === 'all' ? 'bg-white text-slate-900 shadow-2xs font-bold' : 'text-slate-500 hover:text-slate-800'}`}
             >
-              All Alerts ({cabAnalyses.length + driverAnalyses.length})
+              All ({cabAnalyses.length + driverAnalyses.length})
             </button>
             <button
               onClick={() => setCategoryTab('cabs')}
-              className={`px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${categoryTab === 'cabs' ? 'bg-rose-600 text-white shadow-2xs' : 'text-slate-500 hover:text-slate-800'}`}
+              className={`px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${categoryTab === 'cabs' ? 'bg-rose-600 text-white shadow-2xs font-bold' : 'text-slate-500 hover:text-slate-800'}`}
             >
               Cabs ({cabAnalyses.length})
             </button>
             <button
               onClick={() => setCategoryTab('drivers')}
-              className={`px-3 py-1.5 rounded-lg cursor-pointer transition-colors ${categoryTab === 'drivers' ? 'bg-rose-600 text-white shadow-2xs' : 'text-slate-500 hover:text-slate-800'}`}
+              className={`px-2.5 py-1.5 rounded-lg cursor-pointer transition-colors ${categoryTab === 'drivers' ? 'bg-rose-600 text-white shadow-2xs font-bold' : 'text-slate-500 hover:text-slate-800'}`}
             >
               Drivers ({driverAnalyses.length})
             </button>
@@ -260,19 +299,19 @@ export const ExpiringAlertsView: React.FC = () => {
           <div className="flex bg-slate-100 p-1 rounded-xl border border-slate-200 text-xs font-semibold text-slate-600">
             <button
               onClick={() => setFilterType('all')}
-              className={`px-3 py-1.5 rounded-lg cursor-pointer ${filterType === 'all' ? 'bg-slate-900 text-white shadow-2xs' : 'text-slate-500'}`}
+              className={`px-2.5 py-1.5 rounded-lg cursor-pointer ${filterType === 'all' ? 'bg-slate-900 text-white shadow-2xs font-bold' : 'text-slate-500'}`}
             >
               All Types
             </button>
             <button
               onClick={() => setFilterType('expired')}
-              className={`px-3 py-1.5 rounded-lg cursor-pointer ${filterType === 'expired' ? 'bg-rose-600 text-white shadow-2xs' : 'text-slate-500'}`}
+              className={`px-2.5 py-1.5 rounded-lg cursor-pointer ${filterType === 'expired' ? 'bg-rose-600 text-white shadow-2xs font-bold' : 'text-slate-500'}`}
             >
               Expired
             </button>
             <button
               onClick={() => setFilterType('expiring_soon')}
-              className={`px-3 py-1.5 rounded-lg cursor-pointer ${filterType === 'expiring_soon' ? 'bg-amber-600 text-white shadow-2xs' : 'text-slate-500'}`}
+              className={`px-2.5 py-1.5 rounded-lg cursor-pointer ${filterType === 'expiring_soon' ? 'bg-amber-600 text-white shadow-2xs font-bold' : 'text-slate-500'}`}
             >
               Expiring Soon
             </button>
@@ -291,13 +330,13 @@ export const ExpiringAlertsView: React.FC = () => {
           {(categoryTab === 'all' || categoryTab === 'cabs') && (
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 pb-3 gap-2">
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                     <Truck className="w-5 h-5 text-rose-600" />
-                    <span>Active Cabs — Expiring/Expired Documents</span>
+                    <span>Cabs — Expiring & Expired Documents</span>
                   </h3>
                   <span className="bg-rose-100 text-rose-800 font-extrabold px-3 py-1 rounded-full text-xs border border-rose-200 shrink-0">
-                    {filteredCabAnalyses.length} Active Cabs Flagged
+                    {filteredCabAnalyses.length} Cabs Flagged ({activeCabAlerts} Active • {inactiveCabAlerts} Inactive)
                   </span>
                 </div>
                 <span className="text-xs font-mono text-slate-500">Sorted by urgency (fewest days remaining first)</span>
@@ -306,80 +345,100 @@ export const ExpiringAlertsView: React.FC = () => {
               {filteredCabAnalyses.length === 0 ? (
                 <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400 text-xs space-y-2">
                   <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
-                  <p className="font-semibold text-slate-700">No active cab document alerts found!</p>
-                  <p>All active vehicles have valid insurance, pollution, permit, fitness, tax, and service dates.</p>
+                  <p className="font-semibold text-slate-700">No cab document alerts found!</p>
+                  <p>All scanned vehicles have valid insurance, pollution, permit, fitness, tax, and service dates.</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredCabAnalyses.map(({ entity: cab, worstStatus, alerts }) => (
-                    <div
-                      key={cab.id}
-                      className={`bg-white rounded-2xl border shadow-sm p-5 space-y-3 relative overflow-hidden transition-all ${
-                        worstStatus === 'expired' 
-                          ? 'border-rose-300 ring-2 ring-rose-500/20' 
-                          : 'border-amber-300 ring-2 ring-amber-500/20'
-                      }`}
-                    >
-                      {/* Top Bar with Pulsing Badge */}
-                      <div className="flex items-start justify-between gap-2">
-                        <div>
-                          <h4 className="font-mono font-bold text-slate-900 text-base">{cab.registrationNumber || 'N/A'}</h4>
-                          <div className="flex items-center gap-2 mt-0.5 font-mono text-[11px] text-slate-500">
-                            <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{cab.etsVehicleId}</span>
-                            <span>{cab.vehicleType}</span>
+                  {filteredCabAnalyses.map(({ entity: cab, worstStatus, alerts }) => {
+                    const isActive = (cab.status || '').toLowerCase() === 'active';
+                    return (
+                      <div
+                        key={cab.id}
+                        className={`bg-white rounded-2xl border shadow-sm p-5 space-y-3 relative overflow-hidden transition-all ${
+                          worstStatus === 'expired' 
+                            ? 'border-rose-300 ring-2 ring-rose-500/20' 
+                            : 'border-amber-300 ring-2 ring-amber-500/20'
+                        }`}
+                      >
+                        {/* Top Bar with Pulsing Badge */}
+                        <div className="flex items-start justify-between gap-2">
+                          <div>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-mono font-bold text-slate-900 text-base">{cab.registrationNumber || 'N/A'}</h4>
+                              <span
+                                className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border uppercase tracking-wider ${
+                                  isActive
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : 'bg-amber-100 text-amber-900 border-amber-300'
+                                }`}
+                              >
+                                {isActive ? 'Active' : 'Inactive'}
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-2 mt-0.5 font-mono text-[11px] text-slate-500">
+                              <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{cab.etsVehicleId}</span>
+                              <span>{cab.vehicleType}</span>
+                            </div>
+                          </div>
+
+                          {/* Blinking Red Alert Badge */}
+                          <div className="flex items-center gap-1.5 bg-rose-600 text-white px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider shadow-sm shrink-0">
+                            <span className="relative flex h-2 w-2">
+                              <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-200 opacity-75"></span>
+                              <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
+                            </span>
+                            <span>{worstStatus === 'expired' ? 'EXPIRED DOCS' : 'EXPIRING SOON'}</span>
                           </div>
                         </div>
 
-                        {/* Blinking Red Alert Badge */}
-                        <div className="flex items-center gap-1.5 bg-rose-600 text-white px-2.5 py-1 rounded-full text-[10px] font-black uppercase tracking-wider shadow-sm shrink-0">
-                          <span className="relative flex h-2 w-2">
-                            <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-200 opacity-75"></span>
-                            <span className="relative inline-flex rounded-full h-2 w-2 bg-white"></span>
-                          </span>
-                          <span>{worstStatus === 'expired' ? 'EXPIRED DOCS' : 'EXPIRING SOON'}</span>
-                        </div>
-                      </div>
-
-                      {/* Client & Driver */}
-                      <div className="text-xs text-slate-600 space-y-1 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">Client:</span>
-                          <span className="font-semibold text-slate-800">{cab.clientName || 'N/A'}</span>
-                        </div>
-                        <div className="flex justify-between">
-                          <span className="text-slate-400">Driver:</span>
-                          <span className="font-semibold text-slate-800">{cab.driverName || 'Unassigned'}</span>
-                        </div>
-                      </div>
-
-                      {/* Specific Triggering Document Alerts List */}
-                      <div className="space-y-1.5 pt-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                          Triggered Certificate Expiries:
-                        </span>
-                        <div className="space-y-1.5">
-                          {alerts.map((al, idx) => (
-                            <div
-                              key={idx}
-                              className={`p-2 rounded-lg text-xs flex items-center justify-between gap-2 border ${
-                                al.status === 'expired'
-                                  ? 'bg-rose-50 border-rose-200 text-rose-900'
-                                  : 'bg-amber-50 border-amber-200 text-amber-900'
-                              }`}
-                            >
-                              <div className="flex items-center gap-1.5">
-                                <AlertTriangle className={`w-3.5 h-3.5 shrink-0 ${al.status === 'expired' ? 'text-rose-600' : 'text-amber-600'}`} />
-                                <span className="font-semibold">{al.docName}</span>
-                              </div>
-                              <div className="text-right font-mono text-[11px] font-bold">
-                                <span>{al.message}</span>
-                              </div>
+                        {/* Client & Driver */}
+                        <div className="text-xs text-slate-600 space-y-1 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">Client:</span>
+                            <span className="font-semibold text-slate-800">{cab.clientName || 'N/A'}</span>
+                          </div>
+                          <div className="flex justify-between">
+                            <span className="text-slate-400">Driver:</span>
+                            <span className="font-semibold text-slate-800">{cab.driverName || 'Unassigned'}</span>
+                          </div>
+                          {!isActive && cab.comments && (
+                            <div className="flex justify-between pt-1 border-t border-slate-200/60 text-[11px]">
+                              <span className="text-amber-700 font-semibold">Note:</span>
+                              <span className="text-slate-700 italic truncate max-w-[200px]">{cab.comments}</span>
                             </div>
-                          ))}
+                          )}
+                        </div>
+
+                        {/* Specific Triggering Document Alerts List */}
+                        <div className="space-y-1.5 pt-1">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Triggered Certificate Expiries:
+                          </span>
+                          <div className="space-y-1.5">
+                            {alerts.map((al, idx) => (
+                              <div
+                                key={idx}
+                                className={`p-2 rounded-lg text-xs flex items-center justify-between gap-2 border ${
+                                  al.status === 'expired'
+                                    ? 'bg-rose-50 border-rose-200 text-rose-900'
+                                    : 'bg-amber-50 border-amber-200 text-amber-900'
+                                }`}
+                              >
+                                <div className="flex items-center gap-1.5">
+                                  <AlertTriangle className={`w-3.5 h-3.5 shrink-0 ${al.status === 'expired' ? 'text-rose-600' : 'text-amber-600'}`} />
+                                  <span className="font-semibold">{al.docName}</span>
+                                </div>
+                                <div className="text-right font-mono text-[11px] font-bold">
+                                  <span>{al.message}</span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  ))}
+                    );
+                  })}
                 </div>
               )}
             </div>
@@ -389,13 +448,13 @@ export const ExpiringAlertsView: React.FC = () => {
           {(categoryTab === 'all' || categoryTab === 'drivers') && (
             <div className="space-y-4">
               <div className="flex flex-col sm:flex-row sm:items-center justify-between border-b border-slate-200 pb-3 gap-2">
-                <div className="flex items-center gap-3">
+                <div className="flex flex-wrap items-center gap-3">
                   <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
                     <Users className="w-5 h-5 text-rose-600" />
-                    <span>Active Drivers — Expiring/Expired Documents</span>
+                    <span>Drivers — Expiring & Expired Documents</span>
                   </h3>
                   <span className="bg-rose-100 text-rose-800 font-extrabold px-3 py-1 rounded-full text-xs border border-rose-200 shrink-0">
-                    {filteredDriverAnalyses.length} Active Drivers Flagged
+                    {filteredDriverAnalyses.length} Drivers Flagged ({activeDriverAlerts} Active • {inactiveDriverAlerts} Inactive)
                   </span>
                 </div>
                 <span className="text-xs font-mono text-slate-500">Sorted by urgency (fewest days remaining first)</span>
@@ -410,13 +469,14 @@ export const ExpiringAlertsView: React.FC = () => {
               {filteredDriverAnalyses.length === 0 ? (
                 <div className="bg-white p-8 rounded-2xl border border-slate-200 text-center text-slate-400 text-xs space-y-2">
                   <CheckCircle2 className="w-8 h-8 text-emerald-500 mx-auto" />
-                  <p className="font-semibold text-slate-700">No active driver document alerts found!</p>
-                  <p>All active drivers have valid licenses, BGV, police, medical, training, and eye test verifications.</p>
+                  <p className="font-semibold text-slate-700">No driver document alerts found!</p>
+                  <p>All scanned drivers have valid licenses, BGV, police, medical, training, and eye test verifications.</p>
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                   {filteredDriverAnalyses.map(({ entity: driver, worstStatus, alerts }) => {
                     const cabNo = getDriverCabNumber(driver, cabs);
+                    const isActive = (driver.status || '').toLowerCase() === 'active';
                     return (
                       <div
                         key={driver.id}
@@ -429,7 +489,18 @@ export const ExpiringAlertsView: React.FC = () => {
                         {/* Top Bar with Pulsing Badge */}
                         <div className="flex items-start justify-between gap-2">
                           <div>
-                            <h4 className="font-bold text-slate-900 text-base">{driver.name || 'N/A'}</h4>
+                            <div className="flex items-center gap-2">
+                              <h4 className="font-bold text-slate-900 text-base">{driver.name || 'N/A'}</h4>
+                              <span
+                                className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border uppercase tracking-wider ${
+                                  isActive
+                                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                                    : 'bg-amber-100 text-amber-900 border-amber-300'
+                                }`}
+                              >
+                                {isActive ? 'Active' : 'Inactive'}
+                              </span>
+                            </div>
                             <div className="flex flex-wrap items-center gap-x-2 gap-y-1 mt-0.5 font-mono text-[11px] text-slate-500">
                               <span>DL: <strong className="text-slate-800">{driver.driverLicenseNumber || 'N/A'}</strong></span>
                             </div>
@@ -464,35 +535,41 @@ export const ExpiringAlertsView: React.FC = () => {
                             <span className="text-slate-400">City:</span>
                             <span className="font-semibold text-slate-800">{driver.city || 'Bangalore'}</span>
                           </div>
+                          {!isActive && driver.comments && (
+                            <div className="flex justify-between pt-1 border-t border-slate-200/60 text-[11px]">
+                              <span className="text-amber-700 font-semibold">Note:</span>
+                              <span className="text-slate-700 italic truncate max-w-[200px]">{driver.comments}</span>
+                            </div>
+                          )}
                         </div>
 
-                      {/* Specific Triggering Document Alerts List */}
-                      <div className="space-y-1.5 pt-1">
-                        <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                          Triggered Verification Expiries:
-                        </span>
-                        <div className="space-y-1.5">
-                          {alerts.map((al, idx) => (
-                            <div
-                              key={idx}
-                              className={`p-2 rounded-lg text-xs flex items-center justify-between gap-2 border ${
-                                al.status === 'expired'
-                                  ? 'bg-rose-50 border-rose-200 text-rose-900'
-                                  : 'bg-amber-50 border-amber-200 text-amber-900'
-                              }`}
-                            >
-                              <div className="flex items-center gap-1.5">
-                                <AlertTriangle className={`w-3.5 h-3.5 shrink-0 ${al.status === 'expired' ? 'text-rose-600' : 'text-amber-600'}`} />
-                                <span className="font-semibold">{al.docName}</span>
+                        {/* Specific Triggering Document Alerts List */}
+                        <div className="space-y-1.5 pt-1">
+                          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+                            Triggered Verification Expiries:
+                          </span>
+                          <div className="space-y-1.5">
+                            {alerts.map((al, idx) => (
+                              <div
+                                key={idx}
+                                className={`p-2 rounded-lg text-xs flex items-center justify-between gap-2 border ${
+                                  al.status === 'expired'
+                                    ? 'bg-rose-50 border-rose-200 text-rose-900'
+                                    : 'bg-amber-50 border-amber-200 text-amber-900'
+                                }`}
+                              >
+                                <div className="flex items-center gap-1.5">
+                                  <AlertTriangle className={`w-3.5 h-3.5 shrink-0 ${al.status === 'expired' ? 'text-rose-600' : 'text-amber-600'}`} />
+                                  <span className="font-semibold">{al.docName}</span>
+                                </div>
+                                <div className="text-right font-mono text-[11px] font-bold">
+                                  <span>{al.message}</span>
+                                </div>
                               </div>
-                              <div className="text-right font-mono text-[11px] font-bold">
-                                <span>{al.message}</span>
-                              </div>
-                            </div>
-                          ))}
+                            ))}
+                          </div>
                         </div>
                       </div>
-                    </div>
                     );
                   })}
                 </div>
@@ -506,7 +583,7 @@ export const ExpiringAlertsView: React.FC = () => {
         isOpen={showReportModal}
         onClose={() => setShowReportModal(false)}
         defaultAlertFilter="all_alerts"
-        defaultStatusFilter="active"
+        defaultStatusFilter="all"
         defaultClientFilter={selectedClient}
       />
     </div>

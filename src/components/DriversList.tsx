@@ -321,7 +321,7 @@ export const DriversList: React.FC = () => {
                   const cabNo = getDriverCabNumber(d, cabs);
                   
                   return (
-                    <tr key={d.id} className={`transition-colors ${isInactive ? 'bg-amber-50/30 hover:bg-amber-50/50' : audit.hasAlert ? 'bg-rose-50/30 hover:bg-rose-50/50' : 'hover:bg-slate-50/80'}`}>
+                    <tr key={d.id} className={`transition-colors ${audit.hasAlert ? (!isInactive ? 'bg-rose-50/30 hover:bg-rose-50/50' : 'bg-rose-50/40 hover:bg-rose-50/60') : (isInactive ? 'bg-amber-50/30 hover:bg-amber-50/50' : 'hover:bg-slate-50/80')}`}>
                       <td className="px-6 py-4">
                         <div>
                           <div className="flex items-center gap-2">
@@ -378,7 +378,7 @@ export const DriversList: React.FC = () => {
                           <span className="text-slate-400">Police: </span>
                           <span className="font-mono text-slate-700 font-medium">{d.policeVerificationExpiryDate || 'N/A'}</span>
                         </div>
-                        {!isInactive && audit.hasAlert && (
+                        {audit.hasAlert && (
                           <div className="mt-1 space-y-0.5">
                             {audit.alerts.map((al, idx) => (
                               <div key={idx} className="text-[10px] font-bold font-mono text-rose-700 flex items-center gap-1">
