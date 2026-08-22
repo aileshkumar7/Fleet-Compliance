@@ -102,47 +102,39 @@ export async function cleanUnwantedClients(): Promise<void> {
 
 export async function ensureDefaultUserAccounts(): Promise<void> {
   try {
+    const usersSnap = await getDocs(collection(db, 'users'));
+    const allUserDocs: { id: string; data: any }[] = [];
+    usersSnap.forEach(d => allUserDocs.push({ id: d.id, data: d.data() }));
+
     const batch = writeBatch(db);
     let hasEdits = false;
 
-    // 1. Ensure Ranjit profile bound to Air India Sats
-    const ranjitDocRef = doc(db, 'users', 'local_user_ranjit');
-    const ranjitEmailRef = doc(db, 'users', 'local_user_ranjit_fleet_local');
-    const ranjitProfile = {
-      uid: 'local_user_ranjit',
-      name: 'Ranjit',
-      email: 'ranjit@fleet.local',
-      role: 'user',
-      clientId: 'CL-AIRINDIA',
-      assignedClientIds: ['CL-AIRINDIA', 'Air India Sats', 'air_india_sats', 'Air India SATS', 'CL-02'],
-      permissions: {
-        viewCabs: true,
-        viewDrivers: true,
-        viewExpiryAlerts: true,
-        uploadDataSheets: true,
-      },
-      updatedAt: new Date().toISOString(),
-      createdBy: 'system',
-    };
+    // Check if admin exists
+    const hasAdmin = allUserDocs.some(u => 
+      (u.data.email || '').toLowerCase() === 'admin@fleet.com' || 
+      (u.data.role || '').toLowerCase() === 'admin'
+    );
 
-    batch.set(ranjitDocRef, ranjitProfile, { merge: true });
-    batch.set(ranjitEmailRef, ranjitProfile, { merge: true });
-    hasEdits = true;
-
-    // 2. Also check if any existing user doc has name "Ranjit" and update client if it was CL-01
-    const usersSnap = await getDocs(collection(db, 'users'));
-    usersSnap.forEach(uDoc => {
-      const uData = uDoc.data();
-      const uName = (uData.name || '').trim().toLowerCase();
-      const uEmail = (uData.email || '').trim().toLowerCase();
-      if ((uName === 'ranjit' || uEmail.includes('ranjit')) && uData.clientId === 'CL-01') {
-        batch.set(uDoc.ref, {
-          clientId: 'CL-AIRINDIA',
-          assignedClientIds: ['CL-AIRINDIA', 'Air India Sats', 'air_india_sats', 'Air India SATS', 'CL-02'],
-        }, { merge: true });
-        hasEdits = true;
-      }
-    });
+    if (!hasAdmin) {
+      const adminRef = doc(db, 'users', 'local_user_admin');
+      batch.set(adminRef, {
+        uid: 'local_user_admin',
+        name: 'Fleet System Admin',
+        email: 'admin@fleet.com',
+        role: 'admin',
+        clientId: 'all',
+        assignedClientIds: ['all'],
+        permissions: {
+          viewCabs: true,
+          viewDrivers: true,
+          viewExpiryAlerts: true,
+          uploadDataSheets: true,
+        },
+        createdAt: new Date().toISOString(),
+        createdBy: 'system',
+      });
+      hasEdits = true;
+    }
 
     if (hasEdits) {
       await batch.commit();
