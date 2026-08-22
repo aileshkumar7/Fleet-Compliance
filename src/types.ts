@@ -167,6 +167,70 @@ export interface UserActivityLog {
   sessionId: string;
 }
 
+export interface ZoneMappingRule {
+  id?: string;
+  type: 'pincode' | 'locality';
+  pattern: string; // 6-digit pincode (e.g. "110037") or locality keyword (e.g. "NANGLOI")
+  zoneName: string; // Target zone (e.g. "South West", "North West")
+  description?: string;
+  createdBy?: string;
+  createdAt?: string;
+  updatedAt?: string;
+}
+
+export interface TripRosterEntry {
+  id?: string;
+  tripId: string;
+  cabNumber: string;
+  loginTimeText: string;
+  serviceDate: string;
+  vendorName?: string;
+  sNo: string;
+  loginId: string;
+  name: string;
+  gender: string;
+  address: string;
+  office: string;
+  rawLocationText: string;
+  contact: string;
+  extractedPincode?: string;
+  zone: string; // Resolved zone or "Unmapped — Needs Review"
+  zoneMatchMethod?: 'pincode' | 'locality' | 'unmapped';
+  matchedRulePattern?: string;
+  clientId: string;
+  clientName?: string;
+  uploadedBy: string;
+  uploadedAt: string;
+  uploadBatchId: string;
+  uploadFileName?: string;
+}
+
+export interface TripBlockSummary {
+  tripId: string;
+  cabNumber: string;
+  loginTimeText: string;
+  serviceDate: string;
+  vendorName: string;
+  passengerCountExpected: number;
+  passengerCountActual: number;
+  isCountMatched: boolean;
+  headerRowIndex: number;
+  passengers: {
+    sNo: string;
+    loginId: string;
+    name: string;
+    gender: string;
+    address: string;
+    office: string;
+    rawLocationText: string;
+    contact: string;
+    extractedPincode?: string;
+    zone: string;
+    zoneMatchMethod?: 'pincode' | 'locality' | 'unmapped';
+    matchedRulePattern?: string;
+  }[];
+}
+
 export interface Trip {
   id?: string; // Document ID = tripId
   tripId: string;

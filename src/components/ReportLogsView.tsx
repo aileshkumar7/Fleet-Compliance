@@ -99,7 +99,9 @@ export const ReportLogsView: React.FC = () => {
                         <span className="inline-flex items-center gap-1.5 bg-emerald-50 text-emerald-700 border border-emerald-200 px-2.5 py-1 rounded-lg text-[10px] font-bold uppercase">
                           <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-600" />
                           <span>
-                            {log.reportType === 'trip_summary'
+                            {log.reportType === 'trip_roster_report' || log.reportType === 'trip_roster'
+                              ? 'Trip Roster (13 Col)'
+                              : log.reportType === 'trip_summary'
                               ? 'Trip Summary'
                               : log.reportType === 'trip_detailed'
                               ? 'Trip Detailed'

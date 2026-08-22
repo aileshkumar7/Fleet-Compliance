@@ -14,7 +14,9 @@ import {
   Shield,
   KeyRound,
   Info,
-  Activity
+  Activity,
+  Compass,
+  MapPin
 } from 'lucide-react';
 import { useAuth } from './context/AuthContext';
 import { LoginView } from './components/LoginView';
@@ -31,6 +33,8 @@ import { CabsList } from './components/CabsList';
 import { ClientsList } from './components/ClientsList';
 import { Dashboard } from './components/Dashboard';
 import { ExpiringAlertsView } from './components/ExpiringAlertsView';
+import { EmployeeTripRosterUploader } from './components/EmployeeTripRosterUploader';
+import { ZoneMappingManager } from './components/ZoneMappingManager';
 import { collection, onSnapshot } from 'firebase/firestore';
 import { db } from './lib/firebase';
 import { Cab, Driver, Client } from './types';
@@ -40,10 +44,28 @@ import { resolveUserClientScope, isRecordAccessible } from './utils/clientUtils'
 export default function App() {
   const { user, userProfile, isAdmin, logout, canAccess, isLoading } = useAuth();
 
-  const [activeTab, setActiveTab] = useState<'dashboard' | 'alerts' | 'uploader' | 'tripUploader' | 'tripAnalytics' | 'drivers' | 'cabs' | 'clients' | 'logs' | 'reportLogs' | 'users' | 'userLogs'>('dashboard');
+  const [activeTab, setActiveTab] = useState<'dashboard' | 'alerts' | 'uploader' | 'rosterUploader' | 'zoneMapping' | 'tripUploader' | 'tripAnalytics' | 'drivers' | 'cabs' | 'clients' | 'logs' | 'reportLogs' | 'users' | 'userLogs'>('dashboard');
+  const [zoneSearchQuery, setZoneSearchQuery] = useState<string>('');
   const [alertCount, setAlertCount] = useState<number>(0);
   const [isMyAccessOpen, setIsMyAccessOpen] = useState<boolean>(false);
   const [availableClients, setAvailableClients] = useState<Client[]>([]);
+
+  // Air India Sats / Ranjit Roster Uploader Access rule
+  const canAccessRosterUploader = useMemo(() => {
+    if (isAdmin) return true;
+    const assigned = userProfile?.assignedClientIds || [];
+    const rawClient = (userProfile?.clientId || '').toLowerCase();
+    const rawName = (userProfile?.name || '').toLowerCase();
+    const rawEmail = (userProfile?.email || '').toLowerCase();
+    return (
+      assigned.includes('all') ||
+      assigned.some(c => c.toLowerCase().includes('air') || c.toLowerCase() === 'cl-airindia') ||
+      rawClient.includes('air') ||
+      rawClient === 'cl-airindia' ||
+      rawName.includes('ranjit') ||
+      rawEmail.includes('ranjit')
+    );
+  }, [isAdmin, userProfile]);
 
   // Expiry alerts real-time counter
   useEffect(() => {
@@ -257,6 +279,24 @@ export default function App() {
               </button>
             )}
 
+            {/* Employee Trip Roster Uploader (Air India Sats / Ranjit) */}
+            {canAccessRosterUploader && (
+              <button
+                onClick={() => setActiveTab('rosterUploader')}
+                className={`w-full text-left rounded-xl px-4 py-2.5 flex items-center gap-3 transition-colors cursor-pointer ${
+                  activeTab === 'rosterUploader' ? 'bg-blue-600 text-white shadow-xs font-semibold' : 'text-slate-400 hover:bg-slate-800/60 hover:text-slate-200'
+                }`}
+              >
+                <FileSpreadsheet className="w-4 h-4 text-cyan-400" />
+                <div className="flex items-center justify-between w-full min-w-0">
+                  <span className="truncate">Trip Roster (Air India)</span>
+                  <span className="text-[9px] font-black uppercase bg-cyan-500/20 text-cyan-300 border border-cyan-400/30 px-1.5 py-0.2 rounded-full shrink-0 ml-1">
+                    Headerless
+                  </span>
+                </div>
+              </button>
+            )}
+
             {/* Trip Data Uploader */}
             {canAccess('uploadDataSheets') && (
               <button
@@ -311,6 +351,20 @@ export default function App() {
                 <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 px-4 block mb-1.5">
                   Administration
                 </span>
+                <button
+                  onClick={() => { setZoneSearchQuery(''); setActiveTab('zoneMapping'); }}
+                  className={`w-full text-left rounded-xl px-4 py-2.5 flex items-center gap-3 transition-colors cursor-pointer ${
+                    activeTab === 'zoneMapping' ? 'bg-amber-600 text-white shadow-xs font-semibold' : 'text-amber-400 hover:bg-amber-950/40 hover:text-amber-300'
+                  }`}
+                >
+                  <Compass className="w-4 h-4" />
+                  <div className="flex items-center justify-between w-full min-w-0">
+                    <span className="truncate">Zone Mapping Rules</span>
+                    <span className="text-[9px] font-black uppercase bg-amber-400/20 text-amber-300 border border-amber-400/30 px-1.5 py-0.2 rounded-full shrink-0 ml-1">
+                      Lookup
+                    </span>
+                  </div>
+                </button>
                 <button
                   onClick={() => setActiveTab('users')}
                   className={`w-full text-left rounded-xl px-4 py-2.5 flex items-center gap-3 transition-colors cursor-pointer ${
@@ -384,6 +438,8 @@ export default function App() {
               <h1 className="text-lg lg:text-xl font-bold text-slate-800 tracking-tight">Fleet Compliance Manager</h1>
               <p className="text-xs text-slate-500">
                 {activeTab === 'uploader' && 'Upload Data Sheet & Snapshot Archive'}
+                {activeTab === 'rosterUploader' && 'Upload Headerless Employee Trip Roster (Air India Sats)'}
+                {activeTab === 'zoneMapping' && 'Zone Mapping Rules & Pincode / Keyword Lookup Dictionary'}
                 {activeTab === 'tripUploader' && 'Upload BA Trip Reports & Deduplicated Trips Sync'}
                 {activeTab === 'tripAnalytics' && 'Daily Trip Volume Analytics & Trends'}
                 {activeTab === 'dashboard' && 'Fleet Overview & Live Document Audit'}
@@ -495,6 +551,19 @@ export default function App() {
             />
           )}
 
+          {activeTab === 'rosterUploader' && canAccessRosterUploader && (
+            <EmployeeTripRosterUploader 
+              onNavigateToZoneMapping={(prefillSearch?: string) => {
+                if (prefillSearch) setZoneSearchQuery(prefillSearch);
+                setActiveTab('zoneMapping');
+              }}
+            />
+          )}
+
+          {activeTab === 'zoneMapping' && isAdmin && (
+            <ZoneMappingManager initialSearch={zoneSearchQuery} />
+          )}
+
           {activeTab === 'tripUploader' && canAccess('uploadDataSheets') && (
             <TripDataUploader onNavigateToTripAnalytics={() => setActiveTab('tripAnalytics')} />
           )}
@@ -524,6 +593,8 @@ export default function App() {
             (activeTab === 'drivers' && !canAccess('viewDrivers')) ||
             (activeTab === 'cabs' && !canAccess('viewCabs')) ||
             (activeTab === 'uploader' && !canAccess('uploadDataSheets')) ||
+            (activeTab === 'rosterUploader' && !canAccessRosterUploader) ||
+            (activeTab === 'zoneMapping' && !isAdmin) ||
             (activeTab === 'tripUploader' && !canAccess('uploadDataSheets')) ||
             (activeTab === 'logs' && !canAccess('uploadDataSheets')) ||
             (activeTab === 'users' && !isAdmin) ||

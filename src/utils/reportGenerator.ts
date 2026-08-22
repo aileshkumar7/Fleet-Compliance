@@ -8,7 +8,7 @@ import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
-import { Cab, Driver, Client, Trip } from '../types';
+import { Cab, Driver, Client, Trip, TripRosterEntry } from '../types';
 import { analyzeCabExpiry, analyzeDriverExpiry, getDocumentStatus, isBgvExemptedByPoliceVerification } from './expiryEngine';
 import { getDriverCabNumber } from './cabDriverUtils';
 import { normalizeRegistration } from './registrationUtils';
@@ -1794,4 +1794,107 @@ export async function exportNotUtilizedCabsReport(
 
   return { fileName, recordCount: notUtilizedCount };
 }
+
+/**
+ * Helper to parse and format login time text (e.g. "Login 06:30", "Login: 07:00", "06:30:00") into HH:MM format
+ */
+export function formatLoginTimeToHHMM(val: any): string {
+  if (!val) return '';
+  const str = String(val).trim();
+  const match = str.match(/(?:(?:Login|Time)\s*:?\s*)?(\d{1,2}:\d{2})(?::\d{2})?/i);
+  if (match && match[1]) {
+    const parts = match[1].split(':');
+    const hh = parts[0].padStart(2, '0');
+    const mm = parts[1];
+    return `${hh}:${mm}`;
+  }
+  return str.replace(/^(?:Login|Time)\s*:?\s*/i, '').trim();
+}
+
+/**
+ * Generates and downloads an Excel file (.xlsx) with exactly 13 columns in exact order:
+ * DATE, S.NO, TIME, NEW ID, NAME, GENDER, ADDRESS, LOCATION, OFFICE, CONTACT, CAB NO, TRIP ID, ZONE
+ * Scoped to Air India Sats and logs to reportLogs collection.
+ */
+export async function exportTripRosterExcelReport(
+  entries: TripRosterEntry[],
+  downloadedBy: string,
+  customDateOrFileName?: string
+): Promise<{ fileName: string; recordCount: number }> {
+  if (!entries || entries.length === 0) {
+    throw new Error('No trip roster records available to export.');
+  }
+
+  // Derive service date from entries or today
+  let dateSuffix = new Date().toISOString().split('T')[0];
+  const firstServiceDate = entries.find(e => e.serviceDate)?.serviceDate;
+  if (firstServiceDate && /^\d{4}-\d{2}-\d{2}$/.test(firstServiceDate)) {
+    dateSuffix = firstServiceDate;
+  } else if (firstServiceDate) {
+    // If format is DD-MM-YYYY or DD/MM/YYYY
+    const cleanDate = firstServiceDate.replace(/[\/\.]/g, '-');
+    dateSuffix = cleanDate;
+  }
+
+  const fileName = customDateOrFileName && customDateOrFileName.endsWith('.xlsx')
+    ? customDateOrFileName
+    : `Trip_Roster_AirIndiaSats_${dateSuffix}.xlsx`;
+
+  // Exactly 13 columns in exact order
+  const formattedRows = entries.map((entry, index) => ({
+    'DATE': entry.serviceDate || '',
+    'S.NO': entry.sNo || String(index + 1),
+    'TIME': formatLoginTimeToHHMM(entry.loginTimeText),
+    'NEW ID': entry.loginId || '',
+    'NAME': entry.name || '',
+    'GENDER': entry.gender || '',
+    'ADDRESS': entry.address || '',
+    'LOCATION': entry.rawLocationText || '',
+    'OFFICE': entry.office || '',
+    'CONTACT': entry.contact || '',
+    'CAB NO': entry.cabNumber || '',
+    'TRIP ID': entry.tripId || '',
+    'ZONE': entry.zone || 'Unmapped — Needs Review'
+  }));
+
+  const worksheet = XLSX.utils.json_to_sheet(formattedRows);
+
+  // Column width configuration for optimal layout
+  worksheet['!cols'] = [
+    { wch: 14 }, // DATE
+    { wch: 8 },  // S.NO
+    { wch: 10 }, // TIME
+    { wch: 15 }, // NEW ID
+    { wch: 24 }, // NAME
+    { wch: 10 }, // GENDER
+    { wch: 45 }, // ADDRESS
+    { wch: 22 }, // LOCATION
+    { wch: 16 }, // OFFICE
+    { wch: 16 }, // CONTACT
+    { wch: 16 }, // CAB NO
+    { wch: 18 }, // TRIP ID
+    { wch: 24 }, // ZONE
+  ];
+
+  const workbook = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(workbook, worksheet, 'Trip Roster');
+  XLSX.writeFile(workbook, fileName);
+
+  // Log to reportLogs collection
+  await logReportDownload(
+    downloadedBy,
+    'trip_roster_report',
+    fileName,
+    {
+      reportName: 'Trip Roster Report (13 Columns)',
+      client: 'Air India Sats',
+      recordCount: entries.length,
+      exportedAt: new Date().toISOString()
+    },
+    entries.length
+  );
+
+  return { fileName, recordCount: entries.length };
+}
+
 
