@@ -78,8 +78,6 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
         setClients(items);
         if (!isAdmin && userBoundClientId) {
           setSelectedClientId(userBoundClientId);
-        } else if (items.length > 0 && selectedClientId === 'auto') {
-          setSelectedClientId(items[0].clientId);
         }
       } catch (e) {
         console.error('Error fetching clients for uploader:', e);
@@ -283,7 +281,7 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
                 </select>
               ) : (
                 <div className="bg-blue-50/80 border border-blue-200 rounded-xl px-4 py-2 text-xs text-blue-900 font-bold flex items-center justify-between">
-                  <span>🏢 {userBoundClientId || 'Bound Client'}</span>
+                  <span>🏢 {clients.find(c => c.clientId?.toLowerCase() === userBoundClientId?.toLowerCase() || c.clientName?.toLowerCase() === userBoundClientId?.toLowerCase())?.clientName || userBoundClientId || 'Bound Client'}</span>
                   <span className="text-[10px] bg-blue-200 text-blue-900 px-2 py-0.5 rounded font-mono font-bold">Auto-Tagged Scope</span>
                 </div>
               )}

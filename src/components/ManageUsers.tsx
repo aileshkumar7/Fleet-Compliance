@@ -238,18 +238,34 @@ export const ManageUsers: React.FC = () => {
         };
 
         // Write directly to primary user doc
-        await setDoc(userRef, updatedProfile, { merge: true });
+        await setDoc(userRef, updatedProfile);
 
-        // If there are secondary duplicate alias docs for this user, sync or clean them
+        // Delete any secondary duplicate alias docs for this user to ensure only 1 doc exists
+        const cleanupBatch = writeBatch(db);
+        let hasCleanup = false;
+
         if (editingUser.allDocIds && editingUser.allDocIds.length > 1) {
-          const batch = writeBatch(db);
           for (const secondaryId of editingUser.allDocIds) {
             if (secondaryId !== primaryDocId) {
-              const secRef = doc(db, 'users', secondaryId);
-              batch.set(secRef, updatedProfile, { merge: true });
+              cleanupBatch.delete(doc(db, 'users', secondaryId));
+              hasCleanup = true;
             }
           }
-          await batch.commit();
+        }
+
+        // Also check if any duplicate doc with old email exists
+        if (editingUser.email && editingUser.email.trim().toLowerCase() !== email.trim().toLowerCase()) {
+          const oldEmailSnap = await getDocs(collection(db, 'users'));
+          oldEmailSnap.forEach(d => {
+            if (d.id !== primaryDocId && (d.data().email || '').trim().toLowerCase() === editingUser.email!.trim().toLowerCase()) {
+              cleanupBatch.delete(d.ref);
+              hasCleanup = true;
+            }
+          });
+        }
+
+        if (hasCleanup) {
+          await cleanupBatch.commit();
         }
 
         setFeedback({ type: 'success', message: `User profile for "${name}" updated successfully.` });
@@ -334,6 +350,29 @@ export const ManageUsers: React.FC = () => {
       if (userToDelete.name) {
         docIdsToDelete.add(`local_user_${userToDelete.name.trim().toLowerCase()}`);
         docIdsToDelete.add(`local_user_${userToDelete.name.trim().toLowerCase().replace(/[^a-z0-9]/g, '_')}`);
+      }
+
+      // Scan existing users in Firestore to catch any matching docs
+      try {
+        const snap = await getDocs(collection(db, 'users'));
+        const targetEmail = (userToDelete.email || '').trim().toLowerCase();
+        const targetName = (userToDelete.name || '').trim().toLowerCase();
+        
+        snap.forEach(d => {
+          const data = d.data();
+          const dEmail = (data.email || '').trim().toLowerCase();
+          const dName = (data.name || '').trim().toLowerCase();
+          if (
+            (targetEmail && dEmail === targetEmail) ||
+            (targetName && dName === targetName) ||
+            d.id === userToDelete.id ||
+            d.id === userToDelete.uid
+          ) {
+            docIdsToDelete.add(d.id);
+          }
+        });
+      } catch (scanErr) {
+        console.warn('Error during full users scan for deletion:', scanErr);
       }
 
       for (const dId of docIdsToDelete) {

@@ -111,11 +111,27 @@ export const ExpiringAlertsView: React.FC = () => {
     };
   }, [userProfile, isAdmin]);
 
+  // Helper to get resolved client name
+  const getClientDisplayName = (recordClientName?: string, recordClientId?: string) => {
+    if (recordClientId) {
+      const matched = clients.find(c => c.clientId?.toLowerCase() === recordClientId.toLowerCase());
+      if (matched?.clientName) return matched.clientName;
+    }
+    if (recordClientName) {
+      const matched = clients.find(c => c.clientName?.toLowerCase() === recordClientName.toLowerCase());
+      if (matched?.clientName) return matched.clientName;
+      return recordClientName;
+    }
+    return 'N/A';
+  };
+
   // Client filter match logic
   const matchClient = (recordClientName?: string, recordClientId?: string) => {
     if (selectedClient === 'all') return true;
+    const resolvedName = getClientDisplayName(recordClientName, recordClientId);
     return (recordClientName || '').toLowerCase() === selectedClient.toLowerCase() ||
-           (recordClientId || '').toLowerCase() === selectedClient.toLowerCase();
+           (recordClientId || '').toLowerCase() === selectedClient.toLowerCase() ||
+           resolvedName.toLowerCase() === selectedClient.toLowerCase();
   };
 
   // Scoped Cabs & Drivers - Filter by client and optional fleetStatusFilter (defaults to 'all' to include Active & Inactive)
@@ -392,7 +408,7 @@ export const ExpiringAlertsView: React.FC = () => {
                         <div className="text-xs text-slate-600 space-y-1 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
                           <div className="flex justify-between">
                             <span className="text-slate-400">Client:</span>
-                            <span className="font-semibold text-slate-800">{cab.clientName || 'N/A'}</span>
+                            <span className="font-semibold text-slate-800">{getClientDisplayName(cab.clientName, cab.clientId)}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-400">Driver:</span>
@@ -525,7 +541,7 @@ export const ExpiringAlertsView: React.FC = () => {
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-400">Client:</span>
-                            <span className="font-semibold text-slate-800">{driver.clientName || 'N/A'}</span>
+                            <span className="font-semibold text-slate-800">{getClientDisplayName(driver.clientName, driver.clientId)}</span>
                           </div>
                           <div className="flex justify-between">
                             <span className="text-slate-400">City:</span>

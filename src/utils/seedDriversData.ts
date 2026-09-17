@@ -64,11 +64,15 @@ export async function cleanUnwantedClients(): Promise<void> {
         batch.delete(dDoc.ref);
         hasEdits = true;
       }
-      if (cName.includes('air india') || cId.includes('airindia') || cName.includes('sats')) {
+      if (cName.includes('air india') || cId.includes('airindia') || cName.includes('sats') || cId === 'cl-02') {
         hasAirIndiaSats = true;
       }
-      if (cName.includes('airport t3') || cId === 'cl-01' || cName.includes('terminal 3')) {
+      if (cName.includes('airport t3') || cId === 'cl-01' || cName.includes('air india t3') || cName.includes('terminal 3')) {
         hasAirportT3 = true;
+        if (cData.clientName !== 'Airport T3') {
+          batch.update(dDoc.ref, { clientName: 'Airport T3', clientId: 'CL-01' });
+          hasEdits = true;
+        }
       }
     });
 
@@ -76,7 +80,7 @@ export async function cleanUnwantedClients(): Promise<void> {
       const newRef = doc(collection(db, 'clients'));
       batch.set(newRef, {
         clientName: 'Air India Sats',
-        clientId: 'CL-AIRINDIA',
+        clientId: 'cl-02',
         createdAt: new Date().toISOString()
       });
       hasEdits = true;

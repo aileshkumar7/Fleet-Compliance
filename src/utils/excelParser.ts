@@ -556,6 +556,89 @@ export async function processDataSheetUpload(
 
   const clientsToInsert = new Map<string, string>(); // clientId -> clientName
 
+  // Fetch known clients from Firestore to resolve client names and IDs accurately
+  const existingClientsSnap = await getDocs(collection(db, 'clients'));
+  const knownClients: { clientId: string; clientName: string }[] = [];
+  existingClientsSnap.forEach(docSnap => {
+    const c = docSnap.data();
+    if (c.clientId && c.clientName) {
+      knownClients.push({
+        clientId: String(c.clientId).trim(),
+        clientName: String(c.clientName).trim(),
+      });
+    }
+  });
+
+  const normalizeClientKey = (val?: string) => (val || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+  const resolveClientForRecord = (
+    rawClientName?: string,
+    rawClientId?: string
+  ): { resolvedClientId: string; resolvedClientName: string } => {
+    // 1. Explicit override passed from user's client dropdown selection
+    if (overrideClientId) {
+      return {
+        resolvedClientId: overrideClientId,
+        resolvedClientName: overrideClientName || overrideClientId,
+      };
+    }
+
+    const cleanName = (rawClientName || '').trim();
+    const cleanId = (rawClientId || '').trim();
+
+    // 2. Match by client name from sheet
+    if (cleanName) {
+      const lower = cleanName.toLowerCase();
+      const matched = knownClients.find(kc => 
+        kc.clientName.toLowerCase() === lower ||
+        normalizeClientKey(kc.clientName) === normalizeClientKey(cleanName) ||
+        (lower.includes('airport') && kc.clientName.toLowerCase().includes('airport')) ||
+        (lower.includes('sats') && kc.clientName.toLowerCase().includes('sats'))
+      );
+      if (matched) {
+        return {
+          resolvedClientId: matched.clientId,
+          resolvedClientName: matched.clientName,
+        };
+      }
+    }
+
+    // 3. Match by client ID from sheet
+    if (cleanId) {
+      const lower = cleanId.toLowerCase();
+      const matched = knownClients.find(kc => 
+        kc.clientId.toLowerCase() === lower ||
+        normalizeClientKey(kc.clientId) === normalizeClientKey(cleanId)
+      );
+      if (matched) {
+        return {
+          resolvedClientId: matched.clientId,
+          resolvedClientName: matched.clientName,
+        };
+      }
+    }
+
+    // 4. If row specifies a new client name, create new client record
+    if (cleanName) {
+      const genId = cleanId || `CL-${cleanName.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10)}`;
+      clientsToInsert.set(genId, cleanName);
+      knownClients.push({ clientId: genId, clientName: cleanName });
+      return {
+        resolvedClientId: genId,
+        resolvedClientName: cleanName,
+      };
+    }
+
+    // 5. Default fallback to primary client
+    const defaultClient = knownClients.find(kc => kc.clientName.toLowerCase().includes('airport')) ||
+                          knownClients[0] ||
+                          { clientId: 'CL-01', clientName: 'Airport T3' };
+    return {
+      resolvedClientId: defaultClient.clientId,
+      resolvedClientName: defaultClient.clientName,
+    };
+  };
+
   // Helper to parse driver sheet
   const parseDriverSheet = async (sheetName: string, status: 'active' | 'inactive') => {
     const sheet = workbook.Sheets[sheetName];
@@ -631,15 +714,10 @@ export async function processDataSheetUpload(
 
       result.totalRecordsProcessed++;
 
-      // Enforce client ID & name overrides or fallback
-      if (overrideClientId) {
-        driverData.clientId = overrideClientId;
-        if (overrideClientName) driverData.clientName = overrideClientName;
-      }
-      if (!driverData.clientId) {
-        driverData.clientId = 'CL-AIRINDIA';
-        if (!driverData.clientName) driverData.clientName = 'Air India T3';
-      }
+      // Enforce client ID & name resolution
+      const { resolvedClientId, resolvedClientName } = resolveClientForRecord(driverData.clientName, driverData.clientId);
+      driverData.clientId = resolvedClientId;
+      driverData.clientName = resolvedClientName;
 
       if (driverData.clientId && driverData.clientName) {
         clientsToInsert.set(driverData.clientId, driverData.clientName);
@@ -845,15 +923,10 @@ export async function processDataSheetUpload(
 
       result.totalRecordsProcessed++;
 
-      // Enforce client ID & name overrides or fallback
-      if (overrideClientId) {
-        cabData.clientId = overrideClientId;
-        if (overrideClientName) cabData.clientName = overrideClientName;
-      }
-      if (!cabData.clientId) {
-        cabData.clientId = 'CL-AIRINDIA';
-        if (!cabData.clientName) cabData.clientName = 'Air India T3';
-      }
+      // Enforce client ID & name resolution
+      const { resolvedClientId, resolvedClientName } = resolveClientForRecord(cabData.clientName, cabData.clientId);
+      cabData.clientId = resolvedClientId;
+      cabData.clientName = resolvedClientName;
 
       if (cabData.clientId && cabData.clientName) {
         clientsToInsert.set(cabData.clientId, cabData.clientName);
@@ -1116,8 +1189,8 @@ export function generateSampleCabsSheetTemplate() {
     {
       etsVehicleId: 'CAB-2001',
       registrationNumber: 'KA-01-MJ-4521',
-      clientName: 'Air India T3',
-      clientId: 'CL-AIRINDIA',
+      clientName: 'Airport T3',
+      clientId: 'CL-01',
       vehicleType: 'Sedan (Dzire)',
       overallComplianceStatus: 'Compliant',
       manufacturingDate: '10/05/2021',
@@ -1148,8 +1221,8 @@ export function generateSampleCabsSheetTemplate() {
     {
       etsVehicleId: 'CAB-9901',
       registrationNumber: 'KA-05-MH-8812',
-      clientName: 'Air India T3',
-      clientId: 'CL-AIRINDIA',
+      clientName: 'Airport T3',
+      clientId: 'CL-01',
       vehicleType: 'SUV (Ertiga)',
       overallComplianceStatus: 'Non-Compliant',
       manufacturingDate: '01/01/2016',
@@ -1205,8 +1278,8 @@ export function generateSampleDriversSheetTemplate() {
     {
       driverId: 'DR-101',
       name: 'Rajesh Kumar',
-      clientName: 'Air India T3',
-      clientId: 'CL-AIRINDIA',
+      clientName: 'Airport T3',
+      clientId: 'CL-01',
       overallComplianceStatus: 'Compliant',
       city: 'Bangalore',
       offices: 'ECity Phase 1',
@@ -1244,8 +1317,8 @@ export function generateSampleDriversSheetTemplate() {
     {
       driverId: 'DR-902',
       name: 'Suresh Patil',
-      clientName: 'Air India T3',
-      clientId: 'CL-AIRINDIA',
+      clientName: 'Airport T3',
+      clientId: 'CL-01',
       overallComplianceStatus: 'Non-Compliant',
       city: 'Bangalore',
       offices: 'Whitefield',
@@ -1312,8 +1385,8 @@ export function generateSampleDataSheetTemplate() {
     {
       driverId: 'DR-101',
       name: 'Rajesh Kumar',
-      clientName: 'Air India T3',
-      clientId: 'CL-AIRINDIA',
+      clientName: 'Airport T3',
+      clientId: 'CL-01',
       overallComplianceStatus: 'Compliant',
       city: 'Bangalore',
       offices: 'ECity Phase 1',
@@ -1351,8 +1424,8 @@ export function generateSampleDataSheetTemplate() {
     {
       driverId: 'DR-902',
       name: 'Suresh Patil',
-      clientName: 'Air India T3',
-      clientId: 'CL-AIRINDIA',
+      clientName: 'Airport T3',
+      clientId: 'CL-01',
       overallComplianceStatus: 'Non-Compliant',
       city: 'Bangalore',
       offices: 'Whitefield',
@@ -1390,8 +1463,8 @@ export function generateSampleDataSheetTemplate() {
     {
       etsVehicleId: 'CAB-2001',
       registrationNumber: 'KA-01-MJ-4521',
-      clientName: 'Air India T3',
-      clientId: 'CL-AIRINDIA',
+      clientName: 'Airport T3',
+      clientId: 'CL-01',
       vehicleType: 'Sedan (Dzire)',
       overallComplianceStatus: 'Compliant',
       manufacturingDate: '10/05/2021',
@@ -1422,8 +1495,8 @@ export function generateSampleDataSheetTemplate() {
     {
       etsVehicleId: 'CAB-9901',
       registrationNumber: 'KA-05-MH-8812',
-      clientName: 'Air India T3',
-      clientId: 'CL-AIRINDIA',
+      clientName: 'Airport T3',
+      clientId: 'CL-01',
       vehicleType: 'SUV (Ertiga)',
       overallComplianceStatus: 'Non-Compliant',
       manufacturingDate: '01/01/2016',
