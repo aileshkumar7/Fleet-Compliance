@@ -4,7 +4,7 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { collection, onSnapshot, query } from 'firebase/firestore';
+import { collection, onSnapshot, query, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { Cab, Client } from '../types';
@@ -12,7 +12,8 @@ import { analyzeCabExpiry } from '../utils/expiryEngine';
 import { matchesCabSearch } from '../utils/searchUtils';
 import { runCabDeduplicationCleanup, CabCleanupReport } from '../utils/cabDeduplicator';
 import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
-import { Truck, Search, RefreshCw, ShieldAlert, ShieldCheck, Calendar, Fuel, User, AlertTriangle, Building2, Sparkles, CheckCircle2 } from 'lucide-react';
+import { deletePreviousFleetData } from '../utils/fleetDeletionUtils';
+import { Truck, Search, RefreshCw, ShieldAlert, ShieldCheck, Calendar, Fuel, User, AlertTriangle, Building2, Sparkles, CheckCircle2, Trash2, X, AlertCircle } from 'lucide-react';
 
 export const CabsList: React.FC = () => {
   const { userProfile, isAdmin } = useAuth();
@@ -24,6 +25,14 @@ export const CabsList: React.FC = () => {
   const [searchTerm, setSearchTerm] = useState<string>('');
   const [selectedClient, setSelectedClient] = useState<string>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'active' | 'inactive'>('all');
+
+  // Deletion States
+  const [cabToDelete, setCabToDelete] = useState<Cab | null>(null);
+  const [isDeletingSingleCab, setIsDeletingSingleCab] = useState<boolean>(false);
+  const [isBulkDeleteOpen, setIsBulkDeleteOpen] = useState<boolean>(false);
+  const [bulkScope, setBulkScope] = useState<'all' | 'client'>('all');
+  const [isDeletingBulk, setIsDeletingBulk] = useState<boolean>(false);
+  const [deleteNotice, setDeleteNotice] = useState<string | null>(null);
 
   const fetchCabs = () => {
     setIsLoading(true);
@@ -212,6 +221,20 @@ export const CabsList: React.FC = () => {
             <span>{isDeduplicating ? 'Merging...' : 'Auto-Merge'}</span>
           </button>
 
+          {isAdmin && (
+            <button
+              onClick={() => {
+                setBulkScope(selectedClient !== 'all' ? 'client' : 'all');
+                setIsBulkDeleteOpen(true);
+              }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 bg-rose-50 hover:bg-rose-100 text-rose-700 border border-rose-200 rounded-xl text-xs font-bold transition-colors cursor-pointer"
+              title="Delete previous cab records from database"
+            >
+              <Trash2 className="w-3.5 h-3.5 text-rose-600" />
+              <span>Delete Previous Cabs</span>
+            </button>
+          )}
+
           <button
             onClick={fetchCabs}
             className="p-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-xl border border-slate-200 transition-colors cursor-pointer"
@@ -220,6 +243,22 @@ export const CabsList: React.FC = () => {
           </button>
         </div>
       </div>
+
+      {/* Delete Action Notice */}
+      {deleteNotice && (
+        <div className="p-4 bg-emerald-50 border border-emerald-300 rounded-2xl flex items-center justify-between text-xs text-emerald-950 font-bold shadow-xs">
+          <div className="flex items-center gap-2">
+            <CheckCircle2 className="w-5 h-5 text-emerald-600 shrink-0" />
+            <span>{deleteNotice}</span>
+          </div>
+          <button
+            onClick={() => setDeleteNotice(null)}
+            className="p-1 hover:bg-emerald-100 text-emerald-700 rounded-lg cursor-pointer"
+          >
+            <X className="w-4 h-4" />
+          </button>
+        </div>
+      )}
 
       <div className="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
         {isLoading ? (
@@ -248,6 +287,7 @@ export const CabsList: React.FC = () => {
                   <th className="px-6 py-3.5">Assigned Driver</th>
                   <th className="px-6 py-3.5">Expiries (Insurance / PUC)</th>
                   <th className="px-6 py-3.5">Status</th>
+                  <th className="px-4 py-3.5 text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-100 bg-white">
@@ -335,6 +375,16 @@ export const CabsList: React.FC = () => {
                           )}
                         </div>
                       </td>
+
+                      <td className="px-4 py-4 text-right">
+                        <button
+                          onClick={() => setCabToDelete(c)}
+                          className="p-2 hover:bg-rose-50 text-slate-400 hover:text-rose-600 rounded-lg transition-colors cursor-pointer"
+                          title="Delete Cab Record"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      </td>
                     </tr>
                   );
                 })}
@@ -343,6 +393,200 @@ export const CabsList: React.FC = () => {
           </div>
         )}
       </div>
+
+      {/* Single Cab Deletion Modal */}
+      {cabToDelete && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-md w-full p-6 space-y-5 shadow-2xl border border-slate-200">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-rose-100 text-rose-700 rounded-2xl">
+                <Trash2 className="w-6 h-6" />
+              </div>
+              <div>
+                <h3 className="text-base font-extrabold text-slate-900">Delete Cab Record</h3>
+                <p className="text-xs text-slate-500">Remove vehicle from fleet registry</p>
+              </div>
+            </div>
+
+            <div className="p-4 bg-slate-50 rounded-2xl border border-slate-200 space-y-1 text-xs">
+              <p className="font-bold text-slate-900 font-mono">{cabToDelete.registrationNumber}</p>
+              <p className="text-slate-600 font-mono">ETS ID: {cabToDelete.etsVehicleId || 'N/A'}</p>
+              <p className="text-slate-600">Client: {cabToDelete.clientName || 'N/A'}</p>
+            </div>
+
+            <p className="text-xs text-rose-700 font-medium">
+              Are you sure you want to permanently delete this vehicle record?
+            </p>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setCabToDelete(null)}
+                disabled={isDeletingSingleCab}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={async () => {
+                  if (!cabToDelete.id) return;
+                  setIsDeletingSingleCab(true);
+                  try {
+                    await deleteDoc(doc(db, 'cabs', cabToDelete.id));
+                    setDeleteNotice(`Cab "${cabToDelete.registrationNumber}" deleted successfully.`);
+                    setCabToDelete(null);
+                  } catch (err: any) {
+                    alert('Failed to delete cab: ' + err.message);
+                  } finally {
+                    setIsDeletingSingleCab(false);
+                  }
+                }}
+                disabled={isDeletingSingleCab}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 transition-colors shadow-xs cursor-pointer"
+              >
+                {isDeletingSingleCab ? 'Deleting...' : 'Delete Cab'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Bulk Delete Cabs Modal */}
+      {isBulkDeleteOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-white rounded-3xl max-w-lg w-full p-6 sm:p-8 space-y-6 shadow-2xl border border-slate-200">
+            <div className="flex items-start justify-between">
+              <div className="flex items-center gap-3">
+                <div className="p-3 bg-rose-100 text-rose-700 rounded-2xl">
+                  <Trash2 className="w-6 h-6" />
+                </div>
+                <div>
+                  <h3 className="text-lg font-extrabold text-slate-900 tracking-tight">
+                    Delete Previous Cabs Data
+                  </h3>
+                  <p className="text-xs text-slate-500">
+                    Purge vehicle records to prepare for a new spreadsheet upload
+                  </p>
+                </div>
+              </div>
+
+              {!isDeletingBulk && (
+                <button
+                  onClick={() => setIsBulkDeleteOpen(false)}
+                  className="p-1.5 hover:bg-slate-100 text-slate-400 hover:text-slate-600 rounded-full transition-colors cursor-pointer"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              )}
+            </div>
+
+            <div className="p-4 bg-rose-50 border border-rose-200 rounded-2xl flex items-start gap-3 text-xs text-rose-900 leading-relaxed">
+              <AlertCircle className="w-4 h-4 text-rose-600 shrink-0 mt-0.5" />
+              <div>
+                <p className="font-bold">Permanent Deletion Warning</p>
+                <p className="text-rose-800 mt-0.5">
+                  This will permanently delete cab records from Firestore. Action is logged in the audit trail.
+                </p>
+              </div>
+            </div>
+
+            <div className="space-y-3">
+              <span className="text-xs font-bold uppercase tracking-wider text-slate-700 block">
+                Select Scope:
+              </span>
+
+              <div className="space-y-2">
+                <label className={`flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition-all ${
+                  bulkScope === 'all' 
+                    ? 'border-rose-400 bg-rose-50/50 text-rose-950 font-bold' 
+                    : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100/60'
+                }`}>
+                  <div className="flex items-center gap-3">
+                    <input
+                      type="radio"
+                      name="bulkCabScopeRadio"
+                      value="all"
+                      checked={bulkScope === 'all'}
+                      onChange={() => setBulkScope('all')}
+                      disabled={isDeletingBulk}
+                      className="h-4 w-4 text-rose-600 border-slate-300 focus:ring-rose-500 cursor-pointer"
+                    />
+                    <span className="text-xs">Delete ALL cab records in database</span>
+                  </div>
+                  <span className="text-xs font-mono font-black bg-white px-2.5 py-0.5 rounded-lg border border-slate-200 text-slate-800">
+                    {cabs.length} records
+                  </span>
+                </label>
+
+                {selectedClient !== 'all' && (
+                  <label className={`flex items-center justify-between p-3.5 rounded-xl border cursor-pointer transition-all ${
+                    bulkScope === 'client' 
+                      ? 'border-rose-400 bg-rose-50/50 text-rose-950 font-bold' 
+                      : 'border-slate-200 bg-slate-50 text-slate-700 hover:bg-slate-100/60'
+                  }`}>
+                    <div className="flex items-center gap-3">
+                      <input
+                        type="radio"
+                        name="bulkCabScopeRadio"
+                        value="client"
+                        checked={bulkScope === 'client'}
+                        onChange={() => setBulkScope('client')}
+                        disabled={isDeletingBulk}
+                        className="h-4 w-4 text-rose-600 border-slate-300 focus:ring-rose-500 cursor-pointer"
+                      />
+                      <span className="text-xs">
+                        Delete only cabs for {clients.find(c => c.clientId === selectedClient)?.clientName || selectedClient}
+                      </span>
+                    </div>
+                    <span className="text-xs font-mono font-black bg-white px-2.5 py-0.5 rounded-lg border border-slate-200 text-slate-800">
+                      {filteredCabs.length} records
+                    </span>
+                  </label>
+                )}
+              </div>
+            </div>
+
+            <div className="flex items-center justify-end gap-3 pt-2 border-t border-slate-100">
+              <button
+                type="button"
+                onClick={() => setIsBulkDeleteOpen(false)}
+                disabled={isDeletingBulk}
+                className="px-4 py-2.5 rounded-xl text-xs font-bold text-slate-600 hover:text-slate-900 bg-slate-100 hover:bg-slate-200 transition-colors cursor-pointer"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={async () => {
+                  setIsDeletingBulk(true);
+                  try {
+                    const matchedC = clients.find(c => c.clientId === selectedClient);
+                    const res = await deletePreviousFleetData({
+                      target: 'cabs',
+                      scope: bulkScope,
+                      clientId: selectedClient !== 'all' ? selectedClient : undefined,
+                      clientName: matchedC?.clientName,
+                      deletedBy: userProfile?.name || userProfile?.email || 'Admin'
+                    });
+                    setIsBulkDeleteOpen(false);
+                    setDeleteNotice(`Successfully deleted ${res.deletedCount} cab records.`);
+                  } catch (err: any) {
+                    alert('Error deleting cabs: ' + err.message);
+                  } finally {
+                    setIsDeletingBulk(false);
+                  }
+                }}
+                disabled={isDeletingBulk}
+                className="px-5 py-2.5 rounded-xl text-xs font-bold text-white bg-rose-600 hover:bg-rose-700 transition-all shadow-md cursor-pointer"
+              >
+                {isDeletingBulk ? 'Deleting Cabs...' : 'Yes, Permanently Delete'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

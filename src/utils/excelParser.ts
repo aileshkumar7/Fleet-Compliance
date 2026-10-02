@@ -23,6 +23,7 @@ export interface UploadResult {
   cabsUpdated: number;
   failedRows: ParseError[];
   totalRecordsProcessed: number;
+  previousRecordsDeleted?: number;
 }
 
 // Convert DD/MM/YYYY or various date formats into YYYY-MM-DD
