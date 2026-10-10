@@ -469,6 +469,7 @@ export default function App() {
             <Dashboard 
               onNavigateToUpload={() => setActiveTab('uploader')} 
               onNavigateToAlerts={() => setActiveTab('alerts')}
+              onNavigateToTripAnalytics={() => setActiveTab('tripAnalytics')}
             />
           )}
 

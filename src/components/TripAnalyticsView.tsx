@@ -50,9 +50,17 @@ import { collection, onSnapshot, query } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Trip, Cab, Client } from '../types';
 import { useAuth } from '../context/AuthContext';
-import { exportTripSummaryReport, exportTripDetailedReport, exportUtilizationSummaryReport, exportUtilizationDateWiseReport, exportNotUtilizedCabsReport } from '../utils/reportGenerator';
+import { 
+  exportTripSummaryReport, 
+  exportTripDetailedReport, 
+  exportUtilizationSummaryReport, 
+  exportUtilizationDateWiseReport, 
+  exportNotUtilizedCabsReport,
+  exportBABoardingSummaryReport
+} from '../utils/reportGenerator';
 import { normalizeRegistration } from '../utils/registrationUtils';
 import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
+import { classifyNotBoardingReason, getTripBoardingClassification } from '../utils/tripParser';
 
 export type PeriodType = '24h' | '7d' | '1m';
 
@@ -1211,6 +1219,71 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
     return selectedCabTrips.reduce((sum, t) => sum + (t.passengerCount || 1), 0);
   }, [selectedCabTrips]);
 
+  // State for BA Boarding analysis in TripAnalyticsView
+  const [baBoardingFilter, setBaBoardingFilter] = useState<'all' | 'completed' | 'no_show' | 'cabs_not_assigned' | 'other'>('all');
+  const [baBoardingSearch, setBaBoardingSearch] = useState<string>('');
+
+  // Compute BA Boarding & Deductions metrics for activePeriodTrips
+  const baBoardingStats = useMemo(() => {
+    const totalTrips = activePeriodTrips.length;
+    let noShowCount = 0;
+    let cabsNotAssignedCount = 0;
+    let completedCount = 0;
+    let otherCount = 0;
+    const reasonsMap: Record<string, { count: number; category: string; isDeducted: boolean }> = {};
+
+    activePeriodTrips.forEach((t) => {
+      const classification = getTripBoardingClassification(t);
+      if (classification.category === 'No Show') {
+        noShowCount++;
+      } else if (classification.category === 'Cabs Not Assigned') {
+        cabsNotAssignedCount++;
+      } else if (classification.category === 'Completed') {
+        completedCount++;
+      } else {
+        otherCount++;
+      }
+      const clean = classification.cleanReason || '--';
+      if (!reasonsMap[clean]) {
+        reasonsMap[clean] = { count: 0, category: classification.category, isDeducted: classification.isDeducted };
+      }
+      reasonsMap[clean].count++;
+    });
+
+    const deductedCount = noShowCount + cabsNotAssignedCount;
+    const netCompletedTrips = Math.max(0, totalTrips - deductedCount);
+    const completionRate = totalTrips > 0 ? (netCompletedTrips / totalTrips) * 100 : 0;
+
+    return {
+      totalTrips,
+      noShowCount,
+      cabsNotAssignedCount,
+      completedCount,
+      otherCount,
+      deductedCount,
+      netCompletedTrips,
+      completionRate,
+      reasonsMap,
+    };
+  }, [activePeriodTrips]);
+
+  const handleExportBASummary = async () => {
+    setIsExporting(true);
+    try {
+      const res = await exportBABoardingSummaryReport(
+        activePeriodTrips,
+        userProfile?.name || userProfile?.email || 'Fleet Admin',
+        selectedClientFilter
+      );
+      setExportSuccessMsg(`Successfully generated ${res.fileName} with ${res.recordCount} trips.`);
+    } catch (err: any) {
+      console.error('Failed to export BA report:', err);
+      alert(`Export error: ${err.message || err}`);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
   const formatDateLabel = (val: any) => {
     if (!val) return 'N/A';
     try {
@@ -1658,6 +1731,30 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
                         </button>
                       </div>
                     </div>
+
+                    {/* Option 3: BA BOARDING & DEDUCTIONS REPORT */}
+                    <div className="bg-slate-800/80 hover:bg-slate-800 p-3 rounded-xl border border-slate-700/80 space-y-2">
+                      <div className="flex items-start gap-2.5">
+                        <div className="p-2 bg-blue-500/20 text-blue-400 rounded-lg shrink-0 mt-0.5">
+                          <FileText className="w-4 h-4" />
+                        </div>
+                        <div>
+                          <h4 className="text-xs font-bold text-white">BA Boarding & Deductions Report (.xlsx)</h4>
+                          <p className="text-[11px] text-slate-400 mt-0.5 leading-snug">
+                            Audits "Not Boarding Reason", automatically deducts No Show & Cabs Not Assigned, and generates complete executive audit log.
+                          </p>
+                        </div>
+                      </div>
+
+                      <button
+                        type="button"
+                        onClick={handleExportBASummary}
+                        className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs py-2 px-3 rounded-lg transition-colors cursor-pointer flex items-center justify-center gap-1.5"
+                      >
+                        <Download className="w-3.5 h-3.5 text-white" />
+                        <span>Export BA Boarding Report ({activePeriodTrips.length} trips)</span>
+                      </button>
+                    </div>
                   </div>
                 </>
               )}
@@ -1935,6 +2032,340 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
             <span className="font-bold text-purple-800 font-mono bg-purple-100/80 px-2 py-0.5 rounded-full">
               {analyticsSummary.pax1m} Pax
             </span>
+          </div>
+        </div>
+      </div>
+
+      {/* BA REPORT: NOT BOARDING REASON ANALYSIS & DEDUCTIONS SECTION */}
+      <div className="bg-white rounded-3xl border border-slate-200 shadow-sm p-6 sm:p-8 space-y-6">
+        {/* Section Header */}
+        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-5">
+          <div className="flex items-start gap-3.5">
+            <div className="w-10 h-10 rounded-2xl bg-indigo-100 text-indigo-700 flex items-center justify-center font-bold shadow-xs shrink-0">
+              <FileSpreadsheet className="w-5 h-5 text-indigo-600" />
+            </div>
+            <div>
+              <div className="flex items-center gap-2 flex-wrap mb-1">
+                <span className="text-[10px] font-black uppercase tracking-wider bg-blue-100 text-blue-800 border border-blue-200 px-2.5 py-0.5 rounded-full">
+                  BA Report Audit
+                </span>
+                <span className="text-[10px] font-black uppercase tracking-wider bg-emerald-100 text-emerald-800 border border-emerald-200 px-2.5 py-0.5 rounded-full">
+                  "--" Counted As Completed
+                </span>
+                <span className="text-[10px] font-black uppercase tracking-wider bg-rose-100 text-rose-800 border border-rose-200 px-2.5 py-0.5 rounded-full">
+                  Deductions Active
+                </span>
+              </div>
+              <h3 className="font-extrabold text-slate-900 text-xl tracking-tight">
+                BA Report: Not Boarding Reason Analysis & Deductions
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                Audit metrics for active scope ({periodHeadlineText}) with automatic deductions for <strong className="text-rose-600">No Show</strong> and <strong className="text-amber-600">Cabs Not Assigned</strong>.
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 self-start md:self-auto shrink-0">
+            <button
+              type="button"
+              onClick={handleExportBASummary}
+              disabled={isExporting || baBoardingStats.totalTrips === 0}
+              className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs px-4 py-2.5 rounded-2xl shadow-xs transition-all flex items-center gap-2 cursor-pointer border border-emerald-500"
+            >
+              <Download className="w-4 h-4 text-emerald-100" />
+              <span>{isExporting ? 'Generating...' : 'Download BA Summary Report (.xlsx)'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* Audit Formula Bar */}
+        <div className="bg-gradient-to-r from-slate-900 via-indigo-950 to-slate-900 rounded-2xl p-4 text-white">
+          <div className="flex flex-col lg:flex-row items-center justify-between gap-3 text-xs">
+            <span className="font-bold text-slate-300 uppercase tracking-wider text-[11px] shrink-0">
+              Billing Audit Calculation:
+            </span>
+            <div className="flex flex-wrap items-center justify-center gap-2 font-mono">
+              <div className="bg-white/10 border border-white/10 px-3 py-1.5 rounded-xl text-white font-bold flex items-center gap-1.5">
+                <span className="text-slate-300 text-xs">Total Trips:</span>
+                <span className="text-blue-300 font-black text-sm">{baBoardingStats.totalTrips.toLocaleString()}</span>
+              </div>
+              <span className="font-bold text-slate-400 text-base">−</span>
+              <div className="bg-rose-500/20 border border-rose-500/30 px-3 py-1.5 rounded-xl text-rose-200 font-bold flex items-center gap-1.5">
+                <span className="text-slate-300 text-xs">No Show:</span>
+                <span className="text-rose-400 font-black text-sm">{baBoardingStats.noShowCount.toLocaleString()}</span>
+              </div>
+              <span className="font-bold text-slate-400 text-base">−</span>
+              <div className="bg-amber-500/20 border border-amber-500/30 px-3 py-1.5 rounded-xl text-amber-200 font-bold flex items-center gap-1.5">
+                <span className="text-slate-300 text-xs">Cabs Not Assigned:</span>
+                <span className="text-amber-400 font-black text-sm">{baBoardingStats.cabsNotAssignedCount.toLocaleString()}</span>
+              </div>
+              <span className="font-bold text-slate-400 text-base">=</span>
+              <div className="bg-emerald-500/20 border border-emerald-400/40 px-3.5 py-1.5 rounded-xl text-emerald-200 font-bold flex items-center gap-2 ring-1 ring-emerald-400/50">
+                <span className="text-slate-200 text-xs">Net Completed Trips:</span>
+                <span className="text-emerald-300 font-black text-base">{baBoardingStats.netCompletedTrips.toLocaleString()}</span>
+                <span className="text-[11px] font-sans bg-emerald-400/30 text-emerald-200 px-2 py-0.5 rounded-full font-bold">
+                  {baBoardingStats.completionRate.toFixed(1)}% Boarded
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* 4 Metric Cards */}
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+          {/* Total Trips */}
+          <div className="bg-slate-50 border border-slate-200 rounded-2xl p-4 flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider">Total Trips</span>
+              <div className="p-2 bg-blue-100 text-blue-700 rounded-xl">
+                <FileSpreadsheet className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="mt-3">
+              <div className="text-2xl font-black text-slate-900 font-mono">
+                {baBoardingStats.totalTrips.toLocaleString()}
+              </div>
+              <p className="text-[11px] text-slate-500 mt-0.5">
+                Reported trip bookings in active scope
+              </p>
+            </div>
+          </div>
+
+          {/* Deducted Net Completed */}
+          <div className="bg-gradient-to-br from-emerald-50 to-teal-50 border border-emerald-300/80 rounded-2xl p-4 flex flex-col justify-between shadow-2xs">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-emerald-900 uppercase tracking-wider">Net Completed / Boarding</span>
+              <div className="p-2 bg-emerald-600 text-white rounded-xl shadow-2xs">
+                <CheckCircle2 className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="mt-3">
+              <div className="text-2xl font-black text-emerald-800 font-mono flex items-baseline gap-2">
+                <span>{baBoardingStats.netCompletedTrips.toLocaleString()}</span>
+                <span className="text-xs font-bold text-emerald-700 bg-emerald-200/80 px-2 py-0.5 rounded-full font-sans">
+                  {baBoardingStats.completionRate.toFixed(1)}%
+                </span>
+              </div>
+              <p className="text-[11px] text-emerald-800 font-medium mt-0.5">
+                Deducted: Total − No Show − Cabs Not Assigned
+              </p>
+            </div>
+          </div>
+
+          {/* No Show */}
+          <div className="bg-gradient-to-br from-rose-50 to-red-50 border border-rose-200 rounded-2xl p-4 flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-rose-900 uppercase tracking-wider">"No Show" (Deducted)</span>
+              <div className="p-2 bg-rose-600 text-white rounded-xl shadow-2xs">
+                <X className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="mt-3">
+              <div className="text-2xl font-black text-rose-700 font-mono flex items-baseline gap-2">
+                <span>{baBoardingStats.noShowCount.toLocaleString()}</span>
+                {baBoardingStats.totalTrips > 0 && (
+                  <span className="text-xs font-bold text-rose-600 font-sans">
+                    ({((baBoardingStats.noShowCount / baBoardingStats.totalTrips) * 100).toFixed(1)}%)
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-rose-800 font-medium mt-0.5">
+                Passenger did not board vehicle
+              </p>
+            </div>
+          </div>
+
+          {/* Cabs Not Assigned */}
+          <div className="bg-gradient-to-br from-amber-50 to-yellow-50 border border-amber-200 rounded-2xl p-4 flex flex-col justify-between">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-bold text-amber-900 uppercase tracking-wider">"Cabs Not Assigned"</span>
+              <div className="p-2 bg-amber-600 text-white rounded-xl shadow-2xs">
+                <AlertTriangle className="w-4 h-4" />
+              </div>
+            </div>
+            <div className="mt-3">
+              <div className="text-2xl font-black text-amber-700 font-mono flex items-baseline gap-2">
+                <span>{baBoardingStats.cabsNotAssignedCount.toLocaleString()}</span>
+                {baBoardingStats.totalTrips > 0 && (
+                  <span className="text-xs font-bold text-amber-600 font-sans">
+                    ({((baBoardingStats.cabsNotAssignedCount / baBoardingStats.totalTrips) * 100).toFixed(1)}%)
+                  </span>
+                )}
+              </div>
+              <p className="text-[11px] text-amber-800 font-medium mt-0.5">
+                Cab allocation unfulfilled by fleet
+              </p>
+            </div>
+          </div>
+        </div>
+
+        {/* Reason Frequency Breakdown Pills & Search Filter */}
+        <div className="space-y-4 pt-2">
+          <div className="flex flex-col sm:flex-row items-center justify-between gap-3">
+            {/* Filter Tabs */}
+            <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setBaBoardingFilter('all')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  baBoardingFilter === 'all'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'bg-slate-100 text-slate-600 hover:bg-slate-200'
+                }`}
+              >
+                All Trips ({baBoardingStats.totalTrips})
+              </button>
+              <button
+                type="button"
+                onClick={() => setBaBoardingFilter('completed')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  baBoardingFilter === 'completed'
+                    ? 'bg-emerald-600 text-white shadow-xs'
+                    : 'bg-emerald-50 text-emerald-800 hover:bg-emerald-100'
+                }`}
+              >
+                Boarded (--) ({baBoardingStats.completedCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setBaBoardingFilter('no_show')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  baBoardingFilter === 'no_show'
+                    ? 'bg-rose-600 text-white shadow-xs'
+                    : 'bg-rose-50 text-rose-800 hover:bg-rose-100'
+                }`}
+              >
+                No Show ({baBoardingStats.noShowCount})
+              </button>
+              <button
+                type="button"
+                onClick={() => setBaBoardingFilter('cabs_not_assigned')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  baBoardingFilter === 'cabs_not_assigned'
+                    ? 'bg-amber-600 text-white shadow-xs'
+                    : 'bg-amber-50 text-amber-800 hover:bg-amber-100'
+                }`}
+              >
+                Cabs Not Assigned ({baBoardingStats.cabsNotAssignedCount})
+              </button>
+              {baBoardingStats.otherCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setBaBoardingFilter('other')}
+                  className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                    baBoardingFilter === 'other'
+                      ? 'bg-indigo-600 text-white shadow-xs'
+                      : 'bg-indigo-50 text-indigo-800 hover:bg-indigo-100'
+                  }`}
+                >
+                  Other ({baBoardingStats.otherCount})
+                </button>
+              )}
+            </div>
+
+            {/* Search Input */}
+            <div className="relative w-full sm:w-64">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3 top-2.5" />
+              <input
+                type="text"
+                placeholder="Search Trip ID, Cab, Reason..."
+                value={baBoardingSearch}
+                onChange={(e) => setBaBoardingSearch(e.target.value)}
+                className="w-full pl-9 pr-3 py-1.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-500"
+              />
+            </div>
+          </div>
+
+          {/* Table of Trips with Reason */}
+          <div className="border border-slate-200 rounded-2xl overflow-hidden max-h-80 overflow-y-auto">
+            <table className="w-full text-left border-collapse text-xs">
+              <thead className="bg-slate-50 border-b border-slate-200 text-slate-600 font-bold uppercase text-[10px] sticky top-0 z-10">
+                <tr>
+                  <th className="px-4 py-3">Trip ID</th>
+                  <th className="px-4 py-3">Date</th>
+                  <th className="px-4 py-3">Cab Reg</th>
+                  <th className="px-4 py-3">Driver</th>
+                  <th className="px-4 py-3">Client / Facility</th>
+                  <th className="px-4 py-3">Not Boarding Reason (Excel)</th>
+                  <th className="px-4 py-3">Status Category</th>
+                  <th className="px-4 py-3">Audit Deduction</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-100 font-normal">
+                {activePeriodTrips
+                  .filter(t => {
+                    const classification = getTripBoardingClassification(t);
+                    if (baBoardingFilter === 'completed' && classification.category !== 'Completed') return false;
+                    if (baBoardingFilter === 'no_show' && classification.category !== 'No Show') return false;
+                    if (baBoardingFilter === 'cabs_not_assigned' && classification.category !== 'Cabs Not Assigned') return false;
+                    if (baBoardingFilter === 'other' && classification.category !== 'Other') return false;
+                    if (baBoardingSearch) {
+                      const q = baBoardingSearch.toLowerCase();
+                      const tid = (t.tripId || '').toLowerCase();
+                      const reg = (t.registration || '').toLowerCase();
+                      const drv = (t.driverName || '').toLowerCase();
+                      const rsn = (t.notBoardingReason || '').toLowerCase();
+                      if (!tid.includes(q) && !reg.includes(q) && !drv.includes(q) && !rsn.includes(q)) return false;
+                    }
+                    return true;
+                  })
+                  .slice(0, 50)
+                  .map((t) => {
+                    const classification = getTripBoardingClassification(t);
+                    const dt = parseTripDate(t.date || t.deploymentTime);
+                    const dtLabel = dt ? dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short' }) : 'N/A';
+                    return (
+                      <tr key={t.tripId} className="hover:bg-slate-50/70 transition-colors">
+                        <td className="px-4 py-2.5 font-mono font-bold text-blue-700">#{t.tripId}</td>
+                        <td className="px-4 py-2.5 text-slate-500 font-mono">{dtLabel}</td>
+                        <td className="px-4 py-2.5 font-mono font-semibold text-slate-800">{t.registration || 'N/A'}</td>
+                        <td className="px-4 py-2.5 text-slate-700">{t.driverName || 'Unassigned'}</td>
+                        <td className="px-4 py-2.5 text-slate-500">{t.facility || t.clientName || 'Air India Sats'}</td>
+                        <td className="px-4 py-2.5 font-medium text-slate-900">
+                          <span className="font-mono bg-slate-100 px-2 py-0.5 rounded text-[11px]">
+                            {t.notBoardingReason || '--'}
+                          </span>
+                        </td>
+                        <td className="px-4 py-2.5">
+                          {classification.category === 'Completed' && (
+                            <span className="bg-emerald-100 text-emerald-800 border border-emerald-200 px-2.5 py-0.5 rounded-full text-[10px] font-bold">
+                              Boarded / Completed (--)
+                            </span>
+                          )}
+                          {classification.category === 'No Show' && (
+                            <span className="bg-rose-100 text-rose-800 border border-rose-200 px-2.5 py-0.5 rounded-full text-[10px] font-bold">
+                              No Show
+                            </span>
+                          )}
+                          {classification.category === 'Cabs Not Assigned' && (
+                            <span className="bg-amber-100 text-amber-800 border border-amber-200 px-2.5 py-0.5 rounded-full text-[10px] font-bold">
+                              Cabs Not Assigned
+                            </span>
+                          )}
+                          {classification.category === 'Other' && (
+                            <span className="bg-indigo-100 text-indigo-800 border border-indigo-200 px-2.5 py-0.5 rounded-full text-[10px] font-bold">
+                              {classification.cleanReason}
+                            </span>
+                          )}
+                        </td>
+                        <td className="px-4 py-2.5">
+                          {classification.isDeducted ? (
+                            <span className="text-rose-700 font-bold text-[11px] flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-rose-600 inline-block"></span>
+                              <span>Deducted</span>
+                            </span>
+                          ) : (
+                            <span className="text-emerald-700 font-bold text-[11px] flex items-center gap-1">
+                              <span className="w-1.5 h-1.5 rounded-full bg-emerald-600 inline-block"></span>
+                              <span>Net Billable</span>
+                            </span>
+                          )}
+                        </td>
+                      </tr>
+                    );
+                  })}
+              </tbody>
+            </table>
           </div>
         </div>
       </div>

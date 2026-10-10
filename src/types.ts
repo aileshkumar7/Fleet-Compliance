@@ -251,6 +251,8 @@ export interface Trip {
   costCenter: string;
   clientId: string;
   clientName?: string;
+  notBoardingReason?: string;
+  notBoardingCategory?: 'Completed' | 'No Show' | 'Cabs Not Assigned' | 'Other';
   uploadedAt: Date | any;
   uploadBatchId?: string;
   uploadBatchFileName?: string;

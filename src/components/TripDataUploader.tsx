@@ -27,9 +27,11 @@ import {
   CopyCheck,
   Info,
   BarChart3,
-  ChevronRight
+  ChevronRight,
+  Download
 } from 'lucide-react';
-import { parseAndUploadTripData, TripUploadSummary } from '../utils/tripParser';
+import { parseAndUploadTripData, generateSampleBATripReportTemplate, TripUploadSummary, classifyNotBoardingReason, getTripBoardingClassification } from '../utils/tripParser';
+import { exportBABoardingSummaryReport } from '../utils/reportGenerator';
 import { runCabDeduplicationCleanup } from '../utils/cabDeduplicator';
 import { collection, onSnapshot, query, orderBy, limit, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -49,6 +51,7 @@ export const TripDataUploader: React.FC<TripDataUploaderProps> = ({ onNavigateTo
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [uploadSummary, setUploadSummary] = useState<TripUploadSummary | null>(null);
   const [dedupeNotice, setDedupeNotice] = useState<string | null>(null);
+  const [isDownloadingSummary, setIsDownloadingSummary] = useState<boolean>(false);
   
   // Options
   const [clearExistingFirst, setClearExistingFirst] = useState<boolean>(false);
@@ -95,6 +98,28 @@ export const TripDataUploader: React.FC<TripDataUploaderProps> = ({ onNavigateTo
       setUploadError(`Failed to clear trip data: ${err.message || err}`);
     } finally {
       setIsWiping(false);
+    }
+  };
+
+  const handleDownloadSummary = async () => {
+    setIsDownloadingSummary(true);
+    try {
+      const snap = await getDocs(collection(db, 'trips'));
+      const allTrips: Trip[] = [];
+      snap.forEach((d) => allTrips.push({ id: d.id, ...d.data() } as Trip));
+      if (allTrips.length === 0) {
+        alert('No trips available in database to download.');
+        return;
+      }
+      await exportBABoardingSummaryReport(
+        allTrips,
+        userProfile?.name || userProfile?.email || 'Fleet Operations'
+      );
+    } catch (err: any) {
+      console.error('Export summary report error:', err);
+      alert(`Export error: ${err.message || err}`);
+    } finally {
+      setIsDownloadingSummary(false);
     }
   };
 
@@ -206,7 +231,28 @@ export const TripDataUploader: React.FC<TripDataUploaderProps> = ({ onNavigateTo
           </div>
         </div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex flex-wrap items-center gap-2.5">
+          <button
+            type="button"
+            onClick={handleDownloadSummary}
+            disabled={isDownloadingSummary}
+            className="inline-flex items-center gap-1.5 bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs px-3.5 py-1.5 rounded-xl transition-colors cursor-pointer shadow-2xs"
+            title="Download BA Boarding & Deductions Summary Report (.xlsx)"
+          >
+            <Download className="w-3.5 h-3.5 text-white" />
+            <span>{isDownloadingSummary ? 'Generating...' : 'Download BA Summary (.xlsx)'}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={generateSampleBATripReportTemplate}
+            className="inline-flex items-center gap-1.5 bg-blue-50 hover:bg-blue-100 text-blue-700 border border-blue-200 font-bold text-xs px-3.5 py-1.5 rounded-xl transition-colors cursor-pointer shadow-2xs"
+            title="Download sample BA Report spreadsheet with 'Not Boarding Reason' column"
+          >
+            <Download className="w-3.5 h-3.5 text-blue-600" />
+            <span>Sample BA Excel Template</span>
+          </button>
+
           <button
             type="button"
             onClick={() => setShowWipeTripsModal(true)}
@@ -418,6 +464,114 @@ export const TripDataUploader: React.FC<TripDataUploaderProps> = ({ onNavigateTo
               )}
             </div>
 
+            {/* BA Report Boarding & Deductions Summary Extracted */}
+            <div className="bg-gradient-to-br from-slate-900 via-slate-850 to-slate-900 text-white rounded-2xl p-5 border border-slate-700/80 shadow-md space-y-4">
+              <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+                <div>
+                  <div className="flex items-center gap-2">
+                    <span className="bg-blue-600 text-white text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-full">
+                      BA Report Extraction
+                    </span>
+                    <span className="text-xs text-slate-400">Column: "Not Boarding Reason"</span>
+                  </div>
+                  <h4 className="text-base font-bold text-white mt-1">
+                    Trip Boarding & Deductions Audit Summary
+                  </h4>
+                  <p className="text-xs text-slate-300">
+                    Calculated from uploaded sheet: Total Trips minus No Show and Cabs Not Assigned.
+                  </p>
+                </div>
+
+                <button
+                  type="button"
+                  onClick={handleDownloadSummary}
+                  disabled={isDownloadingSummary}
+                  className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white text-xs font-bold px-4 py-2 rounded-xl flex items-center gap-2 transition-all cursor-pointer shadow-sm shrink-0"
+                >
+                  <Download className="w-4 h-4 text-emerald-100" />
+                  <span>{isDownloadingSummary ? 'Generating...' : 'Download Summary Report (.xlsx)'}</span>
+                </button>
+              </div>
+
+              {/* Formula Equation */}
+              <div className="bg-slate-850 rounded-xl p-3 border border-slate-700">
+                <div className="flex flex-wrap items-center justify-center gap-2 text-xs font-mono">
+                  <span className="text-slate-400 font-sans text-[11px] font-bold uppercase mr-1">Formula:</span>
+                  <div className="bg-slate-900 border border-slate-700 px-2.5 py-1 rounded text-slate-200">
+                    Total: <strong className="text-blue-400">{uploadSummary.totalTrips.toLocaleString()}</strong>
+                  </div>
+                  <span className="text-slate-500 font-bold">−</span>
+                  <div className="bg-rose-950/60 border border-rose-800 px-2.5 py-1 rounded text-rose-200">
+                    No Show: <strong className="text-rose-400">{uploadSummary.noShowCount.toLocaleString()}</strong>
+                  </div>
+                  <span className="text-slate-500 font-bold">−</span>
+                  <div className="bg-amber-950/60 border border-amber-800 px-2.5 py-1 rounded text-amber-200">
+                    Cabs Not Assigned: <strong className="text-amber-400">{uploadSummary.cabsNotAssignedCount.toLocaleString()}</strong>
+                  </div>
+                  <span className="text-slate-500 font-bold">=</span>
+                  <div className="bg-emerald-950/80 border border-emerald-700 px-3 py-1 rounded text-emerald-200 font-bold">
+                    Net Completed: <strong className="text-emerald-400">{uploadSummary.netCompletedTrips.toLocaleString()}</strong>
+                    <span className="ml-1.5 text-[10px] font-sans bg-emerald-800 text-emerald-100 px-1.5 py-0.2 rounded font-bold">
+                      {uploadSummary.completionRate.toFixed(1)}% Boarded
+                    </span>
+                  </div>
+                </div>
+              </div>
+
+              {/* 4 Cards */}
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+                <div className="bg-slate-800/60 p-3 rounded-xl border border-slate-700/60">
+                  <span className="text-slate-400 block text-[11px] font-medium">Total Trips</span>
+                  <span className="text-xl font-bold font-mono text-white mt-1 block">
+                    {uploadSummary.totalTrips.toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="bg-emerald-950/40 p-3 rounded-xl border border-emerald-800/60">
+                  <span className="text-emerald-300 block text-[11px] font-medium">Net Completed</span>
+                  <span className="text-xl font-bold font-mono text-emerald-400 mt-1 block">
+                    {uploadSummary.netCompletedTrips.toLocaleString()}
+                  </span>
+                  <span className="text-[10px] text-emerald-300">
+                    {uploadSummary.completionRate.toFixed(1)}% completion
+                  </span>
+                </div>
+
+                <div className="bg-rose-950/40 p-3 rounded-xl border border-rose-800/60">
+                  <span className="text-rose-300 block text-[11px] font-medium">No Show (Deducted)</span>
+                  <span className="text-xl font-bold font-mono text-rose-400 mt-1 block">
+                    {uploadSummary.noShowCount.toLocaleString()}
+                  </span>
+                </div>
+
+                <div className="bg-amber-950/40 p-3 rounded-xl border border-amber-800/60">
+                  <span className="text-amber-300 block text-[11px] font-medium">Cabs Not Assigned (Deducted)</span>
+                  <span className="text-xl font-bold font-mono text-amber-400 mt-1 block">
+                    {uploadSummary.cabsNotAssignedCount.toLocaleString()}
+                  </span>
+                </div>
+              </div>
+
+              {/* Reason Pills */}
+              <div className="pt-2 flex flex-wrap items-center gap-2 text-xs">
+                <span className="text-slate-400 text-[11px] font-bold">Breakdown:</span>
+                <span className="bg-emerald-900/60 text-emerald-200 border border-emerald-700/60 px-2 py-0.5 rounded-lg">
+                  Boarded / Completed (--): <strong>{uploadSummary.completedCount}</strong>
+                </span>
+                <span className="bg-rose-900/60 text-rose-200 border border-rose-700/60 px-2 py-0.5 rounded-lg">
+                  No Show: <strong>{uploadSummary.noShowCount}</strong>
+                </span>
+                <span className="bg-amber-900/60 text-amber-200 border border-amber-700/60 px-2 py-0.5 rounded-lg">
+                  Cabs Not Assigned: <strong>{uploadSummary.cabsNotAssignedCount}</strong>
+                </span>
+                {uploadSummary.otherReasonsCount > 0 && (
+                  <span className="bg-indigo-900/60 text-indigo-200 border border-indigo-700/60 px-2 py-0.5 rounded-lg">
+                    Other Reasons: <strong>{uploadSummary.otherReasonsCount}</strong>
+                  </span>
+                )}
+              </div>
+            </div>
+
             {/* Post-Upload CTA: View & Download Utilization Reports */}
             {onNavigateToTripAnalytics && (
               <div className="bg-gradient-to-r from-blue-900 via-indigo-950 to-slate-900 text-white rounded-2xl p-4 sm:p-5 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 shadow-lg border border-blue-800/80 animate-in fade-in slide-in-from-bottom-2 duration-200">
@@ -488,59 +642,82 @@ export const TripDataUploader: React.FC<TripDataUploaderProps> = ({ onNavigateTo
                   <th className="p-3">Times (Deploy / Pick / Drop)</th>
                   <th className="p-3">Direction</th>
                   <th className="p-3">Facility / Office</th>
+                  <th className="p-3">Not Boarding Reason / Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200">
-                {recentTrips.map((t) => (
-                  <tr key={t.tripId} className="hover:bg-blue-50/30 transition-colors">
-                    <td className="p-3 font-mono font-bold text-blue-900">
-                      {t.tripId}
-                    </td>
-                    <td className="p-3 font-mono text-slate-700">
-                      <div className="flex items-center gap-1">
-                        <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                        <span>{formatDateValue(t.date)}</span>
-                      </div>
-                    </td>
-                    <td className="p-3 font-mono font-bold text-slate-900">
-                      <span className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded border border-slate-200">
-                        {t.registration || 'N/A'}
-                      </span>
-                    </td>
-                    <td className="p-3">
-                      <p className="font-bold text-slate-900">{t.driverName || 'N/A'}</p>
-                      {t.driverContactNo && (
-                        <p className="text-[11px] font-mono text-slate-500">{t.driverContactNo}</p>
-                      )}
-                    </td>
-                    <td className="p-3 text-center">
-                      <span className="inline-flex items-center justify-center w-7 h-7 bg-blue-100 text-blue-900 font-mono font-black rounded-full text-xs border border-blue-200">
-                        {t.passengerCount || 1}
-                      </span>
-                    </td>
-                    <td className="p-3 font-mono text-[11px] text-slate-600 space-y-0.5">
-                      <div className="flex items-center gap-1">
-                        <Clock className="w-3 h-3 text-slate-400 shrink-0" />
-                        <span>Deploy: <strong className="text-slate-800">{formatTimeValue(t.deploymentTime)}</strong></span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <span>Pick: <strong className="text-emerald-700">{formatTimeValue(t.actualPickupTime)}</strong></span>
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <span>Drop: <strong className="text-rose-700">{formatTimeValue(t.actualDropTime)}</strong></span>
-                      </div>
-                    </td>
-                    <td className="p-3">
-                      <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-medium capitalize">
-                        {t.direction || t.tripType || 'Standard'}
-                      </span>
-                    </td>
-                    <td className="p-3 text-slate-600 space-y-0.5">
-                      <p className="font-medium text-slate-800">{t.facility || 'N/A'}</p>
-                      {t.office && <p className="text-[10px] text-slate-400">{t.office}</p>}
-                    </td>
-                  </tr>
-                ))}
+                {recentTrips.map((t) => {
+                  const classification = getTripBoardingClassification(t);
+                  return (
+                    <tr key={t.tripId} className="hover:bg-blue-50/30 transition-colors">
+                      <td className="p-3 font-mono font-bold text-blue-900">
+                        {t.tripId}
+                      </td>
+                      <td className="p-3 font-mono text-slate-700">
+                        <div className="flex items-center gap-1">
+                          <Calendar className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span>{formatDateValue(t.date)}</span>
+                        </div>
+                      </td>
+                      <td className="p-3 font-mono font-bold text-slate-900">
+                        <span className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded border border-slate-200">
+                          {t.registration || 'N/A'}
+                        </span>
+                      </td>
+                      <td className="p-3">
+                        <p className="font-bold text-slate-900">{t.driverName || 'N/A'}</p>
+                        {t.driverContactNo && (
+                          <p className="text-[11px] font-mono text-slate-500">{t.driverContactNo}</p>
+                        )}
+                      </td>
+                      <td className="p-3 text-center">
+                        <span className="inline-flex items-center justify-center w-7 h-7 bg-blue-100 text-blue-900 font-mono font-black rounded-full text-xs border border-blue-200">
+                          {t.passengerCount || 1}
+                        </span>
+                      </td>
+                      <td className="p-3 font-mono text-[11px] text-slate-600 space-y-0.5">
+                        <div className="flex items-center gap-1">
+                          <Clock className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                          <span>Deploy: <strong className="text-slate-800">{formatTimeValue(t.deploymentTime)}</strong></span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span>Pick: <strong className="text-emerald-700">{formatTimeValue(t.actualPickupTime)}</strong></span>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <span>Drop: <strong className="text-rose-700">{formatTimeValue(t.actualDropTime)}</strong></span>
+                        </div>
+                      </td>
+                      <td className="p-3">
+                        <span className="bg-slate-100 text-slate-700 px-2 py-0.5 rounded font-medium capitalize">
+                          {t.direction || t.tripType || 'Standard'}
+                        </span>
+                      </td>
+                      <td className="p-3 text-slate-600 space-y-0.5">
+                        <p className="font-medium text-slate-800">{t.facility || 'N/A'}</p>
+                        {t.office && <p className="text-[10px] text-slate-400">{t.office}</p>}
+                      </td>
+                      <td className="p-3">
+                        {classification.category === 'No Show' ? (
+                          <span className="inline-flex items-center gap-1 bg-rose-100 text-rose-800 border border-rose-200 px-2 py-0.5 rounded text-[11px] font-bold">
+                            No Show (Deducted)
+                          </span>
+                        ) : classification.category === 'Cabs Not Assigned' ? (
+                          <span className="inline-flex items-center gap-1 bg-amber-100 text-amber-800 border border-amber-200 px-2 py-0.5 rounded text-[11px] font-bold">
+                            Cabs Not Assigned (Deducted)
+                          </span>
+                        ) : classification.category === 'Completed' ? (
+                          <span className="inline-flex items-center gap-1 bg-emerald-100 text-emerald-800 border border-emerald-200 px-2 py-0.5 rounded text-[11px] font-bold font-mono">
+                            {t.notBoardingReason || '--'} (Boarded)
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 bg-slate-100 text-slate-800 border border-slate-200 px-2 py-0.5 rounded text-[11px]">
+                            {t.notBoardingReason}
+                          </span>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
