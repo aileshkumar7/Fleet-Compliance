@@ -61,6 +61,7 @@ import {
 import { normalizeRegistration } from '../utils/registrationUtils';
 import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
 import { classifyNotBoardingReason, getTripBoardingClassification } from '../utils/tripParser';
+import { fleetStorage } from '../lib/fleetStorage';
 
 export type PeriodType = '24h' | '7d' | '1m';
 
@@ -325,48 +326,27 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
 
     const applyScope = () => {
       const scope = resolveUserClientScope(userProfile, rawClients);
-      setTrips(rawTrips.filter(t => isRecordAccessible(t, scope)));
-      setCabs(rawCabs.filter(c => isRecordAccessible(c, scope)));
+      setTrips(rawTrips.filter(t => isRecordAccessible(t, scope) || (!t.clientId && !t.clientName)));
+      setCabs(rawCabs.filter(c => isRecordAccessible(c, scope) || (!c.clientId && !c.clientName)));
       setClients(rawClients.filter(c => isRecordAccessible(c, scope)));
       setLoading(false);
     };
 
-    const qTrips = query(collection(db, 'trips'));
-    const unsubTrips = onSnapshot(
-      qTrips,
-      (snapshot) => {
-        const list: Trip[] = [];
-        snapshot.forEach((doc) => {
-          list.push({ id: doc.id, ...doc.data() } as Trip);
-        });
-        rawTrips = list;
-        applyScope();
-      },
-      (err) => {
-        console.error('Error fetching trips for analytics:', err);
-        setLoading(false);
-      }
-    );
+    // Resilient fleetStorage subscription for trips
+    const unsubTrips = fleetStorage.subscribe<Trip>('trips', (items) => {
+      rawTrips = items;
+      applyScope();
+    });
 
-    const qCabs = query(collection(db, 'cabs'));
-    const unsubCabs = onSnapshot(
-      qCabs,
-      (snapshot) => {
-        const list: Cab[] = [];
-        snapshot.forEach((doc) => {
-          const data = doc.data();
-          list.push({
-            id: doc.id,
-            ...data,
-            registrationNumber: data.registrationNumber || data.regNumber || data.vehicleNumber || 'N/A',
-            clientName: data.clientName || data.client || 'N/A',
-          } as Cab);
-        });
-        rawCabs = list;
-        applyScope();
-      },
-      (err) => console.error('Error fetching cabs for analytics:', err)
-    );
+    // Resilient fleetStorage subscription for cabs
+    const unsubCabs = fleetStorage.subscribe<Cab>('cabs', (items) => {
+      rawCabs = items.map(c => ({
+        ...c,
+        registrationNumber: c.registrationNumber || (c as any).regNumber || (c as any).vehicleNumber || 'N/A',
+        clientName: c.clientName || (c as any).client || 'N/A',
+      }));
+      applyScope();
+    });
 
     const qClients = query(collection(db, 'clients'));
     const unsubClients = onSnapshot(
@@ -1278,7 +1258,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       setExportSuccessMsg(`Successfully generated ${res.fileName} with ${res.recordCount} trips.`);
     } catch (err: any) {
       console.error('Failed to export BA report:', err);
-      alert(`Export error: ${err.message || err}`);
+      setExportSuccessMsg(`Export error: ${err.message || err}`);
+      setTimeout(() => setExportSuccessMsg(null), 6000);
     } finally {
       setIsExporting(false);
     }

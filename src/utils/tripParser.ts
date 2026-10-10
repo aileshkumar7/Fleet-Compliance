@@ -6,6 +6,7 @@
 import * as XLSX from 'xlsx';
 import { doc, getDoc, setDoc, writeBatch, collection, addDoc, getDocs } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { fleetStorage } from '../lib/fleetStorage';
 import { Trip, UploadChangeRecord } from '../types';
 
 export type BoardingCategory = 'Completed' | 'No Show' | 'Cabs Not Assigned' | 'Other';
@@ -30,12 +31,13 @@ export function hashCode(str: string): number {
  * Classifies "Not Boarding Reason" per user instructions:
  * - Consider "--", "-", empty, "completed", "boarded" as Boarding or "completed"
  * - Deduct "No Show"
- * - Deduct "Cabs Not Assigned"
+ * - Deduct "Cabs Not Assigned" / "Cabs Not Deployed"
  * - Retain any other reasons for informational audit breakdown
  */
 export function classifyNotBoardingReason(
   rawReason: any,
-  explicitCategory?: 'Completed' | 'No Show' | 'Cabs Not Assigned' | 'Other' | string
+  explicitCategory?: 'Completed' | 'No Show' | 'Cabs Not Assigned' | 'Other' | string,
+  columnContext?: string
 ): BoardingReasonClassification {
   // 1. If explicit category was already provided or stored, honor it directly
   if (explicitCategory === 'No Show') {
@@ -53,7 +55,7 @@ export function classifyNotBoardingReason(
       category: 'Cabs Not Assigned',
       isDeducted: true,
       cleanReason: clean,
-      displayLabel: 'Cabs Not Assigned'
+      displayLabel: 'Cabs Not Deployed / Not Assigned'
     };
   }
   if (explicitCategory === 'Completed') {
@@ -78,40 +80,66 @@ export function classifyNotBoardingReason(
   // Strip zero-width chars and non-breaking spaces
   const str = String(rawReason).replace(/[\u200B-\u200D\uFEFF\u00A0]/g, ' ').trim();
   const lower = str.toLowerCase();
+  const ctx = (columnContext || '').toLowerCase();
 
-  // User requirement: please consider "--" as Boarding or "completed"
-  // Also "No", "None", "Nil" (meaning No not-boarding reason) are Boarded / Completed
-  if (
-    !str || 
-    str === '--' || 
-    str === '-' || 
-    str === '—' || 
-    str.toUpperCase() === 'N/A' || 
-    str.toUpperCase() === 'NA' || 
-    str === '.' ||
-    lower === 'completed' || 
-    lower === 'complete' || 
-    lower === 'boarded' || 
-    lower === 'boarding' || 
-    lower === 'yes' || 
-    lower === 'no' ||
-    lower === 'none' ||
-    lower === 'nil' ||
-    lower === 'nill' ||
-    lower === 'ok' || 
-    lower === 'done' || 
-    lower === 'success' || 
-    lower === 'successful'
-  ) {
-    return {
-      category: 'Completed',
-      isDeducted: false,
-      cleanReason: str || '--',
-      displayLabel: 'Boarding / Completed (--)'
-    };
+  // If column indicates deployment (e.g. "Cab Deployed", "Vehicle Deployed")
+  if (ctx.includes('deployed') || ctx.includes('deployment')) {
+    if (
+      lower === 'no' ||
+      lower === 'n' ||
+      lower === '0' ||
+      lower === 'false' ||
+      lower.includes('not') ||
+      lower.includes('unassigned')
+    ) {
+      return {
+        category: 'Cabs Not Assigned',
+        isDeducted: true,
+        cleanReason: 'Cabs Not Deployed',
+        displayLabel: 'Cabs Not Deployed / Not Assigned'
+      };
+    }
   }
 
-  // Check for No Show
+  // If column indicates No Show (e.g. "No Show", "Pax No Show")
+  if (ctx.includes('noshow') || ctx.includes('no show')) {
+    if (
+      lower === 'yes' ||
+      lower === 'y' ||
+      lower === '1' ||
+      lower === 'true' ||
+      lower.includes('no show') ||
+      lower.includes('noshow')
+    ) {
+      return {
+        category: 'No Show',
+        isDeducted: true,
+        cleanReason: 'No Show',
+        displayLabel: 'No Show'
+      };
+    }
+  }
+
+  // If column indicates Cabs Not Assigned or Cabs Not Deployed
+  if (ctx.includes('notassigned') || ctx.includes('notdeployed') || ctx.includes('not assigned') || ctx.includes('not deployed')) {
+    if (
+      lower === 'yes' ||
+      lower === 'y' ||
+      lower === '1' ||
+      lower === 'true' ||
+      lower.includes('not assigned') ||
+      lower.includes('not deployed')
+    ) {
+      return {
+        category: 'Cabs Not Assigned',
+        isDeducted: true,
+        cleanReason: 'Cabs Not Deployed',
+        displayLabel: 'Cabs Not Deployed / Not Assigned'
+      };
+    }
+  }
+
+  // Check for No Show in string
   if (
     lower.includes('no show') || 
     lower.includes('noshow') || 
@@ -142,7 +170,7 @@ export function classifyNotBoardingReason(
     };
   }
 
-  // Check for Cabs Not Assigned
+  // Check for Cabs Not Assigned / Cabs Not Deployed in string
   if (
     lower.includes('cabs not assigned') || 
     lower.includes('cab not assigned') || 
@@ -183,8 +211,40 @@ export function classifyNotBoardingReason(
     return {
       category: 'Cabs Not Assigned',
       isDeducted: true,
-      cleanReason: str || 'Cabs Not Assigned',
-      displayLabel: 'Cabs Not Assigned'
+      cleanReason: lower.includes('deployed') ? 'Cabs Not Deployed' : (str || 'Cabs Not Assigned'),
+      displayLabel: 'Cabs Not Deployed / Not Assigned'
+    };
+  }
+
+  // User requirement: please consider "--" as Boarding or "completed"
+  // Also "None", "Nil" (meaning No not-boarding reason) are Boarded / Completed
+  if (
+    !str || 
+    str === '--' || 
+    str === '-' || 
+    str === '—' || 
+    str.toUpperCase() === 'N/A' || 
+    str.toUpperCase() === 'NA' || 
+    str === '.' ||
+    lower === 'completed' || 
+    lower === 'complete' || 
+    lower === 'boarded' || 
+    lower === 'boarding' || 
+    lower === 'yes' || 
+    lower === 'no' ||
+    lower === 'none' ||
+    lower === 'nil' ||
+    lower === 'nill' ||
+    lower === 'ok' || 
+    lower === 'done' || 
+    lower === 'success' || 
+    lower === 'successful'
+  ) {
+    return {
+      category: 'Completed',
+      isDeducted: false,
+      cleanReason: str || '--',
+      displayLabel: 'Boarding / Completed (--)'
     };
   }
 
@@ -232,25 +292,25 @@ export function getTripBoardingClassification(trip: Partial<Trip>): BoardingReas
       isDeducted: true,
       cleanReason: trip.notBoardingReason && trip.notBoardingReason !== 'Not Boarded' && trip.notBoardingReason !== 'No'
         ? String(trip.notBoardingReason).trim()
-        : 'Cabs Not Assigned',
-      displayLabel: 'Cabs Not Assigned'
+        : 'Cabs Not Deployed',
+      displayLabel: 'Cabs Not Deployed / Not Assigned'
     };
   }
 
   // 2. Check explicit properties (notBoardingReason, notBoardingCategory)
   if (trip.notBoardingCategory || trip.notBoardingReason !== undefined) {
     const cls = classifyNotBoardingReason(trip.notBoardingReason, trip.notBoardingCategory);
-    // If reason is "Not Boarded" and either driver is unassigned or registration is missing/NA/not deployed
+    // If reason is "Not Boarded" and registration is missing/NA/not deployed (do NOT treat valid cab registrations as unassigned cabs!)
     if (
       cls.category === 'Other' &&
       String(trip.notBoardingReason).trim().toLowerCase() === 'not boarded' &&
-      (!trip.driverName || trip.driverName === 'Unassigned' || !trip.registration || trip.registration === 'N/A' || trip.registration.toLowerCase().includes('not'))
+      (!trip.registration || trip.registration === 'N/A' || trip.registration.toLowerCase().includes('not') || trip.registration.toLowerCase().includes('unassigned'))
     ) {
       return {
         category: 'Cabs Not Assigned',
         isDeducted: true,
         cleanReason: 'Cabs Not Assigned',
-        displayLabel: 'Cabs Not Assigned'
+        displayLabel: 'Cabs Not Deployed / Not Assigned'
       };
     }
     return cls;
@@ -479,11 +539,23 @@ const TRIP_HEADER_MAP: Record<string, keyof Trip | 'employeeCount'> = {
   paxnoshow: 'notBoardingReason',
   employeenoshow: 'notBoardingReason',
 
-  // Cabs Not Assigned headers
+  // Cabs Not Assigned & Not Deployed headers
   cabsnotassigned: 'notBoardingReason',
   cabnotassigned: 'notBoardingReason',
   cabsnotassign: 'notBoardingReason',
   cabnotassign: 'notBoardingReason',
+  cabsnotdeployed: 'notBoardingReason',
+  cabnotdeployed: 'notBoardingReason',
+  notdeployed: 'notBoardingReason',
+  cabsdeployed: 'notBoardingReason',
+  cabdeployed: 'notBoardingReason',
+  cabdeployment: 'notBoardingReason',
+  deploymentstatus: 'notBoardingReason',
+  cabdeploymentstatus: 'notBoardingReason',
+  vehicledeploymentstatus: 'notBoardingReason',
+  vehicledeployed: 'notBoardingReason',
+  isdeployed: 'notBoardingReason',
+  deployment: 'notBoardingReason',
   notassigned: 'notBoardingReason',
   unassigned: 'notBoardingReason',
   cabsunassigned: 'notBoardingReason',
@@ -713,13 +785,40 @@ export async function parseAndUploadTripData(
     }
   }
 
-  // 1. Read workbook
+  // 1. Read workbook and find the best worksheet
   const workbook = XLSX.read(fileBuffer, { type: 'array', cellDates: true });
-  const sheetName = workbook.SheetNames[0];
-  const worksheet = workbook.Sheets[sheetName];
+  let chosenSheetName = workbook.SheetNames[0];
+  let chosenRows: Record<string, any>[] = [];
 
-  // Convert to JSON objects
-  const rawRows: Record<string, any>[] = XLSX.utils.sheet_to_json(worksheet, { defval: '' });
+  // If multiple sheets exist, inspect them to pick the sheet containing trip records
+  for (const sName of workbook.SheetNames) {
+    const ws = workbook.Sheets[sName];
+    const rows: Record<string, any>[] = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    if (!rows || rows.length === 0) continue;
+
+    // Check if any row key has trip ID or registration or date
+    const first = rows[0];
+    const keys = Object.keys(first).map(k => normalizeHeader(k));
+    const hasTripId = keys.some(k => k.includes('trip') || k.includes('booking') || k.includes('request'));
+    const sLower = sName.toLowerCase();
+
+    if (hasTripId || sLower.includes('trip') || sLower.includes('ba') || sLower.includes('report') || sLower.includes('audit')) {
+      chosenSheetName = sName;
+      chosenRows = rows;
+      break;
+    }
+    if (rows.length > chosenRows.length) {
+      chosenSheetName = sName;
+      chosenRows = rows;
+    }
+  }
+
+  if (chosenRows.length === 0) {
+    const ws = workbook.Sheets[chosenSheetName];
+    chosenRows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+  }
+
+  const rawRows: Record<string, any>[] = chosenRows;
 
   if (!rawRows || rawRows.length === 0) {
     throw new Error('The uploaded file is empty or contains no readable trip rows.');
@@ -874,6 +973,31 @@ export async function parseAndUploadTripData(
         const norm = normalizeHeader(colName);
         const mappedKey = colKeyToTripKeyMap[colName];
 
+        // Dedicated "Deployment / Deployed" column check (e.g. Cab Deployed = No / 0 / False / Not Deployed)
+        if (
+          norm.includes('cabdeployed') ||
+          norm.includes('cabsdeployed') ||
+          norm === 'deployed' ||
+          norm === 'isdeployed' ||
+          norm.includes('deploymentstatus') ||
+          norm.includes('cabdeployment') ||
+          norm.includes('vehicledeployment')
+        ) {
+          const lowerVal = valStr.toLowerCase();
+          if (
+            lowerVal === 'no' ||
+            lowerVal === 'n' ||
+            lowerVal === '0' ||
+            lowerVal === 'false' ||
+            lowerVal.includes('not deployed') ||
+            lowerVal.includes('not assigned') ||
+            lowerVal.includes('unassigned')
+          ) {
+            candidates.push(classifyNotBoardingReason('Cabs Not Deployed', 'Cabs Not Assigned', colName));
+            continue;
+          }
+        }
+
         // Dedicated "No Show" column check (e.g. Yes/Y/1/No Show)
         if (norm === 'noshow' || norm.includes('noshow') || norm === 'noshowstatus') {
           const lowerVal = valStr.toLowerCase();
@@ -885,12 +1009,12 @@ export async function parseAndUploadTripData(
             lowerVal.includes('no show') || 
             lowerVal.includes('noshow')
           ) {
-            candidates.push(classifyNotBoardingReason('No Show', 'No Show'));
+            candidates.push(classifyNotBoardingReason('No Show', 'No Show', colName));
             continue;
           }
         }
 
-        // Dedicated "Cabs Not Assigned" column check (e.g. Yes/Y/1/Cabs Not Assigned)
+        // Dedicated "Cabs Not Assigned / Cabs Not Deployed" column check (e.g. Yes/Y/1/Cabs Not Assigned)
         if (
           norm === 'cabsnotassigned' || 
           norm === 'cabnotassigned' || 
@@ -910,7 +1034,7 @@ export async function parseAndUploadTripData(
             lowerVal.includes('unassigned') ||
             lowerVal.includes('not deployed')
           ) {
-            candidates.push(classifyNotBoardingReason('Cabs Not Assigned', 'Cabs Not Assigned'));
+            candidates.push(classifyNotBoardingReason('Cabs Not Assigned', 'Cabs Not Assigned', colName));
             continue;
           }
         }
@@ -940,7 +1064,7 @@ export async function parseAndUploadTripData(
           norm === 'comments' ||
           norm === 'comment'
         ) {
-          const cls = classifyNotBoardingReason(valStr);
+          const cls = classifyNotBoardingReason(valStr, undefined, colName);
           if (cls.category !== 'Completed' || (valStr === '--' || valStr === '-')) {
             candidates.push(cls);
           }
@@ -1027,7 +1151,16 @@ export async function parseAndUploadTripData(
     processedTripsToSave.push({ tripId, data: tripData });
   }
 
-  // 3. Pre-fetch existing trip doc IDs in a single query to avoid slow sequential getDoc calls
+  // 3. Immediately save processed trips into resilient local fleetStorage cache
+  // This guarantees zero-lag UI updates and prevents data loss if Firestore quota is exceeded
+  const tripsForCache: Trip[] = processedTripsToSave.map(item => ({
+    ...item.data,
+    tripId: normalizeTripId(item.tripId),
+    id: normalizeTripId(item.tripId),
+  }));
+  fleetStorage.saveFleetTrips(tripsForCache);
+
+  // 4. Pre-fetch existing trip doc IDs to track added vs updated records
   const existingDocIdsSet = new Set<string>();
   try {
     const existingSnap = await getDocs(collection(db, 'trips'));
@@ -1076,14 +1209,18 @@ export async function parseAndUploadTripData(
       batch.set(tripRef, payload, { merge: true });
     }
 
-    await batch.commit();
+    try {
+      await batch.commit();
+    } catch (commitErr: any) {
+      console.warn('Firestore trip batch commit quota/error (locally cached safely):', commitErr);
+    }
     processedCount += chunk.length;
 
     if (onProgress) {
       onProgress(
         processedCount,
         totalUniqueTrips,
-        `Saved ${processedCount} of ${totalUniqueTrips} trips to database...`
+        `Processed ${processedCount} of ${totalUniqueTrips} trips...`
       );
     }
   }

@@ -108,7 +108,7 @@ export const TripDataUploader: React.FC<TripDataUploaderProps> = ({ onNavigateTo
       const allTrips: Trip[] = [];
       snap.forEach((d) => allTrips.push({ id: d.id, ...d.data() } as Trip));
       if (allTrips.length === 0) {
-        alert('No trips available in database to download.');
+        setUploadError('No trips available in database to download.');
         return;
       }
       await exportBABoardingSummaryReport(
@@ -117,7 +117,7 @@ export const TripDataUploader: React.FC<TripDataUploaderProps> = ({ onNavigateTo
       );
     } catch (err: any) {
       console.error('Export summary report error:', err);
-      alert(`Export error: ${err.message || err}`);
+      setUploadError(`Export error: ${err.message || err}`);
     } finally {
       setIsDownloadingSummary(false);
     }

@@ -13,6 +13,7 @@ import { matchesCabSearch } from '../utils/searchUtils';
 import { runCabDeduplicationCleanup, CabCleanupReport } from '../utils/cabDeduplicator';
 import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
 import { deletePreviousFleetData } from '../utils/fleetDeletionUtils';
+import { fleetStorage } from '../lib/fleetStorage';
 import { Truck, Search, RefreshCw, ShieldAlert, ShieldCheck, Calendar, Fuel, User, AlertTriangle, Building2, Sparkles, CheckCircle2, Trash2, X, AlertCircle } from 'lucide-react';
 
 export const CabsList: React.FC = () => {
@@ -67,6 +68,12 @@ export const CabsList: React.FC = () => {
       setIsLoading(false);
     });
 
+    // Real-time listener from fleetStorage (resilient local cache + Firestore)
+    const unsubscribeFleetStorage = fleetStorage.subscribe<Cab>('cabs', (cachedCabs) => {
+      rawCabs = cachedCabs;
+      applyScope();
+    });
+
     const unsubscribeClients = onSnapshot(collection(db, 'clients'), (clientSnap) => {
       const cItems: Client[] = [];
       clientSnap.forEach(c => cItems.push({ id: c.id, ...c.data() } as Client));
@@ -76,6 +83,7 @@ export const CabsList: React.FC = () => {
 
     return () => {
       unsubscribeCabs();
+      unsubscribeFleetStorage();
       unsubscribeClients();
     };
   };
@@ -433,11 +441,11 @@ export const CabsList: React.FC = () => {
                   if (!cabToDelete.id) return;
                   setIsDeletingSingleCab(true);
                   try {
-                    await deleteDoc(doc(db, 'cabs', cabToDelete.id));
+                    await fleetStorage.deleteSingleRecord('cabs', cabToDelete.id);
                     setDeleteNotice(`Cab "${cabToDelete.registrationNumber}" deleted successfully.`);
                     setCabToDelete(null);
                   } catch (err: any) {
-                    alert('Failed to delete cab: ' + err.message);
+                    setDeleteNotice('Failed to delete cab: ' + (err.message || 'Unknown error'));
                   } finally {
                     setIsDeletingSingleCab(false);
                   }
@@ -573,7 +581,7 @@ export const CabsList: React.FC = () => {
                     setIsBulkDeleteOpen(false);
                     setDeleteNotice(`Successfully deleted ${res.deletedCount} cab records.`);
                   } catch (err: any) {
-                    alert('Error deleting cabs: ' + err.message);
+                    setDeleteNotice('Error deleting cabs: ' + (err.message || 'Unknown error'));
                   } finally {
                     setIsDeletingBulk(false);
                   }

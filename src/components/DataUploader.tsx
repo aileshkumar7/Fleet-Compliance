@@ -36,6 +36,7 @@ import {
 } from '../utils/excelParser';
 import { runCabDeduplicationCleanup } from '../utils/cabDeduplicator';
 import { deletePreviousFleetData, DeleteResult } from '../utils/fleetDeletionUtils';
+import { fleetStorage } from '../lib/fleetStorage';
 
 interface DataUploaderProps {
   onUploadSuccess?: () => void;
@@ -109,25 +110,15 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
     fetchClients();
   }, [isAdmin, userBoundClientId]);
 
-  // Real-time listener for current database count of Drivers and Cabs
+  // Real-time listener for current database count of Drivers and Cabs via fleetStorage (resilient local cache + Firestore)
   useEffect(() => {
-    const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snap) => {
-      const list: { id: string; clientId?: string; clientName?: string }[] = [];
-      snap.forEach(d => {
-        const data = d.data();
-        list.push({ id: d.id, clientId: data.clientId, clientName: data.clientName });
-      });
-      setDriversDataState(list);
-    }, (err) => console.error('Error listening to drivers count:', err));
+    const unsubDrivers = fleetStorage.subscribe('drivers', (list) => {
+      setDriversDataState(list.map(d => ({ id: d.id, clientId: d.clientId, clientName: d.clientName })));
+    });
 
-    const unsubCabs = onSnapshot(collection(db, 'cabs'), (snap) => {
-      const list: { id: string; clientId?: string; clientName?: string }[] = [];
-      snap.forEach(d => {
-        const data = d.data();
-        list.push({ id: d.id, clientId: data.clientId, clientName: data.clientName });
-      });
-      setCabsDataState(list);
-    }, (err) => console.error('Error listening to cabs count:', err));
+    const unsubCabs = fleetStorage.subscribe('cabs', (list) => {
+      setCabsDataState(list.map(c => ({ id: c.id, clientId: c.clientId, clientName: c.clientName })));
+    });
 
     return () => {
       unsubDrivers();

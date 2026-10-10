@@ -15,6 +15,7 @@ import { getDriverCabNumber } from '../utils/cabDriverUtils';
 import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
 import { classifyNotBoardingReason, getTripBoardingClassification } from '../utils/tripParser';
 import { exportBABoardingSummaryReport } from '../utils/reportGenerator';
+import { fleetStorage } from '../lib/fleetStorage';
 import { RecordDetailView } from './RecordDetailView';
 import { ReportDownloadModal } from './ReportDownloadModal';
 import { 
@@ -177,15 +178,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
       setIsLoading(false);
     });
 
-    // 5. Subscribe to trips collection for BA Boarding audit
-    const unsubscribeTrips = onSnapshot(collection(db, 'trips'), (snapshot) => {
-      const tripItems: Trip[] = [];
-      snapshot.forEach(docSnap => {
-        tripItems.push({ id: docSnap.id, ...docSnap.data() } as Trip);
-      });
-      setTrips(tripItems);
-    }, (err) => {
-      console.error('Error listening to trips:', err);
+    // 5. Subscribe to trips collection via fleetStorage (resilient local cache + Firestore)
+    const unsubscribeTrips = fleetStorage.subscribe<Trip>('trips', (items) => {
+      setTrips(items);
     });
 
     return () => {
@@ -200,8 +195,14 @@ export const Dashboard: React.FC<DashboardProps> = ({
   // Filter logic for client scoping
   const matchClient = (recordClientName?: string, recordClientId?: string) => {
     if (selectedClient === 'all') return true;
-    return (recordClientName || '').toLowerCase() === selectedClient.toLowerCase() ||
-           (recordClientId || '').toLowerCase() === selectedClient.toLowerCase();
+    const rName = (recordClientName || '').trim().toLowerCase();
+    const rId = (recordClientId || '').trim().toLowerCase();
+    const s = selectedClient.trim().toLowerCase();
+
+    // If record has no client assigned, keep accessible
+    if (!rName && !rId) return true;
+
+    return rName === s || rId === s || rName.includes(s) || rId.includes(s);
   };
 
   // Records scoped by selected client
@@ -210,6 +211,43 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const scopedTrips = useMemo(() => {
     return trips.filter(t => matchClient(t.clientName, t.clientId));
   }, [trips, selectedClient]);
+
+  // Date filtering state specifically for BA Boarding Audit & Deductions
+  const [baReportSelectedDate, setBaReportSelectedDate] = useState<string>('all');
+
+  // Extract distinct calendar dates for quick BA Report date filtering
+  const availableTripDates = useMemo(() => {
+    const dateMap = new Map<string, { key: string; label: string; count: number; dateObj: Date }>();
+    scopedTrips.forEach(t => {
+      let d: Date | null = null;
+      if (t.date?.toDate && typeof t.date.toDate === 'function') d = t.date.toDate();
+      else if (t.date instanceof Date) d = t.date;
+      else if (t.date) d = new Date(t.date);
+      if (!d || isNaN(d.getTime())) return;
+
+      const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+      const label = d.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+      const existing = dateMap.get(key) || { key, label, count: 0, dateObj: d };
+      existing.count++;
+      dateMap.set(key, existing);
+    });
+    return Array.from(dateMap.values()).sort((a, b) => b.dateObj.getTime() - a.dateObj.getTime());
+  }, [scopedTrips]);
+
+  // Scoped trips respecting both client selection and BA Report date filter
+  const baScopedTrips = useMemo(() => {
+    if (baReportSelectedDate === 'all') return scopedTrips;
+    return scopedTrips.filter(t => {
+      let d: Date | null = null;
+      if (t.date?.toDate && typeof t.date.toDate === 'function') d = t.date.toDate();
+      else if (t.date instanceof Date) d = t.date;
+      else if (t.date) d = new Date(t.date);
+      if (!d || isNaN(d.getTime())) return false;
+
+      const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+      return key === baReportSelectedDate;
+    });
+  }, [scopedTrips, baReportSelectedDate]);
 
   // Compute live summary counts strictly respecting selected client filter
   const totalCabsCount = scopedCabs.length;
@@ -223,16 +261,16 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const totalFleetCount = totalCabsCount + totalDriversCount;
 
   // Compute BA Boarding & Deduction Audit Metrics
-  // Formula: Total Trip count, and deduct "No Show" and "Cabs Not Assigned" ("--" considered as Boarding/Completed)
+  // Formula: Total Trip count, and deduct "No Show" and "Cabs Not Assigned / Deployed" ("--" considered as Boarding/Completed)
   const baReportStats = useMemo(() => {
-    const totalTrips = scopedTrips.length;
+    const totalTrips = baScopedTrips.length;
     let noShowCount = 0;
     let cabsNotAssignedCount = 0;
     let completedCount = 0;
     let otherCount = 0;
     const reasonsMap: Record<string, { count: number; category: string; isDeducted: boolean }> = {};
 
-    scopedTrips.forEach(t => {
+    baScopedTrips.forEach(t => {
       const classification = getTripBoardingClassification(t);
       if (classification.category === 'No Show') {
         noShowCount++;
@@ -265,13 +303,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
       completionRate,
       reasonsMap,
     };
-  }, [scopedTrips]);
+  }, [baScopedTrips]);
 
   const handleDownloadBASummaryReport = async () => {
     setIsExportingBAReport(true);
     try {
       const res = await exportBABoardingSummaryReport(
-        scopedTrips,
+        baScopedTrips,
         userProfile?.name || userProfile?.email || 'Fleet Operations',
         selectedClient === 'all' ? undefined : selectedClient
       );
@@ -279,7 +317,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
       setTimeout(() => setBaReportSuccessToast(null), 6000);
     } catch (err: any) {
       console.error('Failed to export BA Report:', err);
-      alert(`Export error: ${err.message || err}`);
+      setBaReportSuccessToast(`Export error: ${err.message || err}`);
+      setTimeout(() => setBaReportSuccessToast(null), 6000);
     } finally {
       setIsExportingBAReport(false);
     }
@@ -533,7 +572,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 onClick={async () => {
                   if (window.confirm("Are you sure you want to clean up legacy system seed data? This will permanently remove any records created by System Seed Engine.")) {
                     const count = await purgeAllDummyData();
-                    alert(`Cleaned up ${count} legacy seed records.`);
+                    setBaReportSuccessToast(`Cleaned up ${count} legacy seed records.`);
+                    setTimeout(() => setBaReportSuccessToast(null), 6000);
                   }
                 }}
                 className="inline-flex items-center gap-1.5 bg-rose-50 hover:bg-rose-100 text-rose-700 font-bold text-xs px-3.5 py-2.5 rounded-xl border border-rose-200 transition-colors cursor-pointer shrink-0"
@@ -627,8 +667,28 @@ export const Dashboard: React.FC<DashboardProps> = ({
             </div>
           </div>
 
-          {/* Action Buttons */}
+          {/* Action Buttons & Date Filter */}
           <div className="flex flex-wrap items-center gap-2.5 shrink-0">
+            {/* Date Filter Dropdown */}
+            {availableTripDates.length > 0 && (
+              <div className="flex items-center gap-1.5 bg-slate-800 p-1.5 rounded-xl border border-slate-700">
+                <Calendar className="w-3.5 h-3.5 text-blue-400 ml-1 shrink-0" />
+                <select
+                  value={baReportSelectedDate}
+                  onChange={(e) => setBaReportSelectedDate(e.target.value)}
+                  className="bg-transparent text-xs font-bold text-white pr-2 py-0.5 focus:outline-none cursor-pointer"
+                  title="Filter BA Report metrics by specific date"
+                >
+                  <option value="all" className="bg-slate-900 text-white">All Dates ({scopedTrips.length} Trips)</option>
+                  {availableTripDates.map(d => (
+                    <option key={d.key} value={d.key} className="bg-slate-900 text-white">
+                      {d.label} ({d.count} Trips)
+                    </option>
+                  ))}
+                </select>
+              </div>
+            )}
+
             {isAdmin && baReportStats.totalTrips > 0 && baReportStats.noShowCount === 0 && baReportStats.cabsNotAssignedCount === 0 && (
               <button
                 type="button"

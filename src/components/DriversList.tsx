@@ -13,6 +13,7 @@ import { matchesDriverSearch } from '../utils/searchUtils';
 import { getDriverCabNumber } from '../utils/cabDriverUtils';
 import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
 import { deletePreviousFleetData } from '../utils/fleetDeletionUtils';
+import { fleetStorage } from '../lib/fleetStorage';
 import { 
   Users, Search, RefreshCw, ShieldAlert, ShieldCheck, Phone, MapPin, 
   AlertTriangle, Building2, CheckCircle2, FileText, ArrowRight, Info, Truck,
@@ -73,6 +74,12 @@ export const DriversList: React.FC = () => {
     }, (err) => {
       console.error('Error listening to drivers:', err);
       setIsLoading(false);
+    });
+
+    // Real-time Drivers listener from fleetStorage
+    const unsubscribeFleetDrivers = fleetStorage.subscribe<Driver>('drivers', (cachedDrivers) => {
+      rawDrivers = cachedDrivers;
+      applyScope();
     });
 
     // Fetch Clients for dropdown filter
@@ -527,11 +534,11 @@ export const DriversList: React.FC = () => {
                   if (!driverToDelete.id) return;
                   setIsDeletingSingle(true);
                   try {
-                    await deleteDoc(doc(db, 'drivers', driverToDelete.id));
+                    await fleetStorage.deleteSingleRecord('drivers', driverToDelete.id);
                     setDeleteNotice(`Driver "${driverToDelete.name}" deleted successfully.`);
                     setDriverToDelete(null);
                   } catch (err: any) {
-                    alert('Failed to delete driver: ' + err.message);
+                    setDeleteNotice('Failed to delete driver: ' + (err?.message || 'Unknown error'));
                   } finally {
                     setIsDeletingSingle(false);
                   }
@@ -667,7 +674,7 @@ export const DriversList: React.FC = () => {
                     setIsBulkDeleteOpen(false);
                     setDeleteNotice(`Successfully deleted ${res.deletedCount} driver records.`);
                   } catch (err: any) {
-                    alert('Error deleting drivers: ' + err.message);
+                    setDeleteNotice('Error deleting drivers: ' + (err?.message || 'Unknown error'));
                   } finally {
                     setIsDeletingBulk(false);
                   }
