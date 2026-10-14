@@ -51,8 +51,8 @@ export const MyAccessPanel: React.FC<MyAccessPanelProps> = ({ isOpen, onClose })
     ? ['All Clients (Global Access)']
     : rawClientKeys.map(cid => {
         const found = clientsList.find(c => 
-          c.clientId.toLowerCase() === cid.toLowerCase() || 
-          c.clientName.toLowerCase() === cid.toLowerCase()
+          (c.clientId || '').toLowerCase() === cid.toLowerCase() || 
+          (c.clientName || '').toLowerCase() === cid.toLowerCase()
         );
         if (found) return `${found.clientName} (${found.clientId})`;
         if (cid.toLowerCase().includes('air')) return 'Air India Sats (CL-AIRINDIA)';

@@ -112,8 +112,8 @@ export default function App() {
     }
     const cid = userProfile?.clientId || userProfile?.assignedClientIds?.[0] || '';
     const matched = availableClients.find(c => 
-      c.clientId.toLowerCase() === cid.toLowerCase() || 
-      c.clientName.toLowerCase() === cid.toLowerCase()
+      (c.clientId || '').toLowerCase() === cid.toLowerCase() || 
+      (c.clientName || '').toLowerCase() === cid.toLowerCase()
     );
     if (matched) return matched.clientName;
     if (cid.toLowerCase().includes('air')) return 'Air India Sats';

@@ -40,22 +40,18 @@ export const LoginView: React.FC = () => {
       return;
     }
 
-    const isPrimaryAdmin = inputVal.toLowerCase().includes('admin') || 
-                           inputVal.toLowerCase() === 'kumarailesh007@gmail.com';
+    const lower = inputVal.toLowerCase();
+    const isPrimaryAdmin = lower.includes('admin') || 
+                           lower.includes('global') ||
+                           lower === 'kumarailesh007@gmail.com';
 
     try {
-      // 1. If it looks like an email and password is provided, try Firebase Auth
-      if (inputVal.includes('@') && password) {
-        try {
-          await signInWithEmailAndPassword(auth, inputVal, password);
-          return;
-        } catch (fbErr: any) {
-          console.warn('Firebase Auth attempt notice, resolving profile from database:', fbErr);
-        }
-      }
-
-      // 2. Direct database profile login (resolves username / email accurately)
-      await loginWithLocalProfile(inputVal, isPrimaryAdmin ? 'admin' : 'user');
+      // Direct reliable database profile login (instant global access for admin)
+      await loginWithLocalProfile(
+        isPrimaryAdmin && !inputVal.includes('@') ? 'admin@fleet.com' : inputVal, 
+        isPrimaryAdmin ? 'admin' : 'user',
+        isPrimaryAdmin ? 'Fleet System Admin' : undefined
+      );
     } catch (err: any) {
       console.error('Login error:', err);
       setErrorMessage(err.message || 'Failed to authenticate.');
@@ -68,7 +64,12 @@ export const LoginView: React.FC = () => {
     setIsLoading(true);
     setErrorMessage('');
     try {
-      await loginWithLocalProfile(u.email || u.name, u.role, u.name);
+      const isAdm = u.role === 'admin' || (u.email || '').toLowerCase().includes('admin');
+      await loginWithLocalProfile(
+        u.email || u.name, 
+        isAdm ? 'admin' : u.role, 
+        isAdm ? 'Fleet System Admin' : u.name
+      );
     } catch (err: any) {
       setErrorMessage(err.message || 'Failed to authenticate.');
     } finally {
@@ -124,8 +125,9 @@ export const LoginView: React.FC = () => {
               <span>Instant Sign In Accounts</span>
             </div>
             <div className="space-y-1 text-[11px] text-amber-800">
-              <p>• <strong>Global Admin:</strong> admin@fleet.com (Password: Password123!)</p>
+              <p>• <strong>Global Admin:</strong> admin@fleet.com or admin (Password: Password123!)</p>
               <p>• <strong>Air India Sats User:</strong> Enter <strong>Ranjit</strong> or ranjit@fleet.local</p>
+              <p className="text-amber-900/80 font-medium">💡 One-click sign-in is also available via <strong>Quick Role Switcher</strong> below.</p>
             </div>
           </div>
 
@@ -141,7 +143,7 @@ export const LoginView: React.FC = () => {
                   required
                   value={identifier}
                   onChange={(e) => setIdentifier(e.target.value)}
-                  placeholder="e.g. Ranjit or admin@fleet.com"
+                  placeholder="e.g. Ranjit, admin, or admin@fleet.com"
                   className="w-full bg-slate-50 border border-slate-200 rounded-xl pl-10 pr-4 py-2.5 text-sm text-slate-800 outline-none focus:ring-2 focus:ring-blue-500 focus:bg-white transition-all"
                 />
               </div>
@@ -179,7 +181,7 @@ export const LoginView: React.FC = () => {
             </button>
           </form>
 
-          {/* Quick User List if configured */}
+          {/* Quick User List if configured (Deduplicated) */}
           {registeredUsers.length > 0 && (
             <div className="pt-3 border-t border-slate-100 space-y-2">
               <div className="flex items-center justify-between text-xs text-slate-500 font-bold uppercase tracking-wider">
@@ -190,24 +192,32 @@ export const LoginView: React.FC = () => {
                 <span className="text-[10px] text-slate-400 font-normal">Click to sign in</span>
               </div>
               <div className="flex flex-wrap gap-1.5 max-h-24 overflow-y-auto">
-                {registeredUsers.map((u, i) => (
-                  <button
-                    key={u.id || u.uid || i}
-                    type="button"
-                    onClick={() => handleQuickLoginUser(u)}
-                    disabled={isLoading}
-                    className="text-xs bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 hover:border-blue-300 rounded-lg px-2.5 py-1 flex items-center gap-1 transition-colors cursor-pointer"
-                  >
-                    <span className="font-medium">{u.name || u.email}</span>
-                    {u.role === 'admin' ? (
-                      <span className="text-[10px] bg-amber-100 text-amber-800 px-1 rounded font-bold">Admin</span>
-                    ) : (
-                      <span className="text-[10px] bg-blue-100 text-blue-800 px-1 rounded font-bold">
-                        {u.clientId || u.assignedClientIds?.[0] || 'User'}
-                      </span>
-                    )}
-                  </button>
-                ))}
+                {registeredUsers
+                  .filter((u, index, self) => 
+                    index === self.findIndex((t) => (
+                      (t.role === 'admin' && u.role === 'admin') ||
+                      (t.email && u.email && t.email.toLowerCase() === u.email.toLowerCase()) ||
+                      t.name === u.name
+                    ))
+                  )
+                  .map((u, i) => (
+                    <button
+                      key={u.id || u.uid || i}
+                      type="button"
+                      onClick={() => handleQuickLoginUser(u)}
+                      disabled={isLoading}
+                      className="text-xs bg-slate-100 hover:bg-blue-50 text-slate-700 hover:text-blue-700 border border-slate-200 hover:border-blue-300 rounded-lg px-2.5 py-1 flex items-center gap-1 transition-colors cursor-pointer"
+                    >
+                      <span className="font-medium">{u.name || u.email}</span>
+                      {u.role === 'admin' ? (
+                        <span className="text-[10px] bg-amber-100 text-amber-800 px-1 rounded font-bold">Admin</span>
+                      ) : (
+                        <span className="text-[10px] bg-blue-100 text-blue-800 px-1 rounded font-bold">
+                          {u.clientId || u.assignedClientIds?.[0] || 'User'}
+                        </span>
+                      )}
+                    </button>
+                  ))}
               </div>
             </div>
           )}

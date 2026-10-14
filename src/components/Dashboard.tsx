@@ -1116,7 +1116,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                 ))}
                 {/* Fallback for client names not in collection */}
                 {Array.from(new Set([...drivers.map(d => d.clientName), ...cabs.map(c => c.clientName)]))
-                  .filter(cName => Boolean(cName) && !clients.some(cl => cl.clientName.toLowerCase() === (cName || '').toLowerCase()))
+                  .filter(cName => Boolean(cName) && !clients.some(cl => (cl.clientName || '').toLowerCase() === (cName || '').toLowerCase()))
                   .map((cName, i) => (
                     <option key={`fallback-${i}`} value={cName}>
                       🏢 {cName}

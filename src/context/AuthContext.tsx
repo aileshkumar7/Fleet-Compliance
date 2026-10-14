@@ -38,6 +38,23 @@ const AuthContext = createContext<AuthContextType>({
 
 const LOCAL_STORAGE_KEY = 'fleet_local_auth_profile';
 
+export const DEFAULT_ADMIN_PROFILE: UserProfile = {
+  uid: 'local_user_admin',
+  name: 'Fleet System Admin',
+  email: 'admin@fleet.com',
+  role: 'admin',
+  clientId: 'all',
+  assignedClientIds: ['all'],
+  permissions: {
+    viewCabs: true,
+    viewDrivers: true,
+    viewExpiryAlerts: true,
+    uploadDataSheets: true,
+  },
+  createdAt: '2026-09-11T07:49:12.975Z',
+  createdBy: 'system',
+};
+
 /**
  * Searches Firestore 'users' collection to locate an existing profile
  * by UID, Email, or Name (case-insensitive).
@@ -47,10 +64,44 @@ export async function findUserProfileInFirestore(
   uid?: string
 ): Promise<UserProfile | null> {
   try {
-    const cleanInput = identifier.trim().toLowerCase();
+    const cleanInput = (identifier || '').trim().toLowerCase();
     const isRanjit = cleanInput.includes('ranjit');
+    const isAdminLookup = cleanInput.includes('admin') || 
+                          cleanInput.includes('global') || 
+                          cleanInput === 'kumarailesh007@gmail.com' ||
+                          uid === 'local_user_admin';
 
-    // 1. Direct document lookup by UID
+    // 1. Direct canonical lookup for Admin (Global Access)
+    if (isAdminLookup) {
+      try {
+        const adminSnap = await getDoc(doc(db, 'users', 'local_user_admin'));
+        if (adminSnap.exists()) {
+          const raw = adminSnap.data();
+          return {
+            id: adminSnap.id,
+            ...raw,
+            uid: 'local_user_admin',
+            role: 'admin',
+            clientId: 'all',
+            assignedClientIds: ['all'],
+            name: raw.name || 'Fleet System Admin',
+            email: raw.email || 'admin@fleet.com',
+            permissions: {
+              viewCabs: true,
+              viewDrivers: true,
+              viewExpiryAlerts: true,
+              uploadDataSheets: true,
+              ...raw.permissions,
+            }
+          } as UserProfile;
+        }
+      } catch (adminErr) {
+        console.warn('Direct admin doc read fallback:', adminErr);
+      }
+      return { ...DEFAULT_ADMIN_PROFILE };
+    }
+
+    // 2. Direct document lookup by UID
     if (uid) {
       const snap = await getDoc(doc(db, 'users', uid));
       if (snap.exists()) {
@@ -66,6 +117,22 @@ export async function findUserProfileInFirestore(
 
     if (!cleanInput) return null;
 
+    // 3. Fast lookup for Ranjit
+    if (isRanjit) {
+      try {
+        const ranjitSnap = await getDoc(doc(db, 'users', 'user_ranjit'));
+        if (ranjitSnap.exists()) {
+          const found = { id: ranjitSnap.id, ...ranjitSnap.data() } as UserProfile;
+          found.clientId = 'CL-AIRINDIA';
+          found.assignedClientIds = ['CL-AIRINDIA', 'Air India Sats', 'air_india_sats', 'Air India SATS', 'CL-02'];
+          found.name = 'Ranjit';
+          return found;
+        }
+      } catch (rErr) {
+        console.warn('Direct ranjit doc read fallback:', rErr);
+      }
+    }
+
     const safeUid = `local_user_${cleanInput.replace(/[^a-z0-9]/g, '_')}`;
     const safeSnap = await getDoc(doc(db, 'users', safeUid));
     let candidateSafeProfile: UserProfile | null = null;
@@ -73,7 +140,7 @@ export async function findUserProfileInFirestore(
       candidateSafeProfile = { id: safeSnap.id, ...safeSnap.data() } as UserProfile;
     }
 
-    // 2. Fetch all user profiles to perform a resilient search across all users
+    // 4. Fetch all user profiles to perform a resilient search across all users
     const usersSnap = await getDocs(collection(db, 'users'));
     const allUsers: UserProfile[] = [];
     usersSnap.forEach(dSnap => {
@@ -234,10 +301,23 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     // Also listen to Firebase Auth changes if Firebase Auth is used
     const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
+      const stored = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (stored) {
+        try {
+          const parsed = JSON.parse(stored);
+          if (parsed && (parsed.role === 'admin' || parsed.email)) {
+            // Local profile is authoritative; do not overwrite with unassigned Firebase auth user
+            setIsLoading(false);
+            return;
+          }
+        } catch (e) {
+          // Ignore parse error
+        }
+      }
       if (currentUser) {
         setUser(currentUser);
         await fetchProfile(currentUser);
-      } else if (!localStorage.getItem(LOCAL_STORAGE_KEY)) {
+      } else if (!stored) {
         setUser(null);
         setUserProfile(null);
       }
@@ -248,9 +328,10 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
   }, []);
 
   const loginWithLocalProfile = async (identifier: string, role?: 'admin' | 'user', customName?: string): Promise<UserProfile> => {
-    const cleanInput = identifier.trim();
+    const cleanInput = (identifier || '').trim();
     const sanitizedEmail = cleanInput.toLowerCase();
     const isPrimaryAdmin = sanitizedEmail.includes('admin') || 
+                           sanitizedEmail.includes('global') ||
                            sanitizedEmail === 'kumarailesh007@gmail.com' || 
                            role === 'admin';
     const computedRole = isPrimaryAdmin ? 'admin' : (role || 'user');
@@ -263,8 +344,21 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       let profile: UserProfile;
 
       if (existingUser) {
-        profile = existingUser;
-        if (isRanjit) {
+        profile = { ...existingUser };
+        if (isPrimaryAdmin) {
+          profile.role = 'admin';
+          profile.clientId = 'all';
+          profile.assignedClientIds = ['all'];
+          profile.name = profile.name || customName || 'Fleet System Admin';
+          profile.email = profile.email || 'admin@fleet.com';
+          profile.permissions = {
+            viewCabs: true,
+            viewDrivers: true,
+            viewExpiryAlerts: true,
+            uploadDataSheets: true,
+            ...profile.permissions,
+          };
+        } else if (isRanjit) {
           profile.name = 'Ranjit';
           profile.clientId = 'CL-AIRINDIA';
           profile.assignedClientIds = ['CL-AIRINDIA', 'Air India Sats', 'air_india_sats', 'Air India SATS', 'CL-02'];
@@ -277,42 +371,51 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
           }
         }
       } else {
-        // Find default client from clients collection
-        let defaultBoundClientId = computedRole === 'admin' ? 'all' : (isRanjit ? 'CL-AIRINDIA' : '');
-        if (!defaultBoundClientId) {
+        if (isPrimaryAdmin) {
+          profile = { ...DEFAULT_ADMIN_PROFILE };
           try {
-            const clientsSnap = await getDocs(collection(db, 'clients'));
-            if (!clientsSnap.empty) {
-              const firstClient = clientsSnap.docs[0].data() as Client;
-              defaultBoundClientId = firstClient.clientId || firstClient.clientName || 'CL-01';
-            } else {
+            await setDoc(doc(db, 'users', 'local_user_admin'), profile);
+          } catch (writeErr) {
+            console.warn('Admin firestore write fallback:', writeErr);
+          }
+        } else {
+          // Find default client from clients collection
+          let defaultBoundClientId = isRanjit ? 'CL-AIRINDIA' : '';
+          if (!defaultBoundClientId) {
+            try {
+              const clientsSnap = await getDocs(collection(db, 'clients'));
+              if (!clientsSnap.empty) {
+                const firstClient = clientsSnap.docs[0].data() as Client;
+                defaultBoundClientId = firstClient.clientId || firstClient.clientName || 'CL-01';
+              } else {
+                defaultBoundClientId = 'CL-01';
+              }
+            } catch (e) {
               defaultBoundClientId = 'CL-01';
             }
-          } catch (e) {
-            defaultBoundClientId = 'CL-01';
           }
+
+          const safeUid = `local_user_${sanitizedEmail.replace(/[^a-z0-9]/g, '_')}`;
+          profile = {
+            uid: safeUid,
+            name: isRanjit ? 'Ranjit' : (customName || (cleanInput.includes('@') ? cleanInput.split('@')[0] : cleanInput)),
+            email: sanitizedEmail.includes('@') ? sanitizedEmail : `${sanitizedEmail}@fleet.local`,
+            role: 'user',
+            clientId: defaultBoundClientId,
+            assignedClientIds: isRanjit ? ['CL-AIRINDIA', 'Air India Sats', 'air_india_sats', 'Air India SATS', 'CL-02'] : [defaultBoundClientId],
+            permissions: {
+              viewCabs: true,
+              viewDrivers: true,
+              viewExpiryAlerts: true,
+              uploadDataSheets: true,
+            },
+            createdAt: new Date().toISOString(),
+            createdBy: 'system',
+          };
+
+          const userRef = doc(db, 'users', safeUid);
+          await setDoc(userRef, profile);
         }
-
-        const safeUid = `local_user_${sanitizedEmail.replace(/[^a-z0-9]/g, '_')}`;
-        profile = {
-          uid: safeUid,
-          name: isRanjit ? 'Ranjit' : (customName || (computedRole === 'admin' ? 'Fleet System Admin' : (cleanInput.includes('@') ? cleanInput.split('@')[0] : cleanInput))),
-          email: sanitizedEmail.includes('@') ? sanitizedEmail : `${sanitizedEmail}@fleet.local`,
-          role: computedRole,
-          clientId: defaultBoundClientId,
-          assignedClientIds: isRanjit ? ['CL-AIRINDIA', 'Air India Sats', 'air_india_sats', 'Air India SATS', 'CL-02'] : [defaultBoundClientId],
-          permissions: {
-            viewCabs: true,
-            viewDrivers: true,
-            viewExpiryAlerts: true,
-            uploadDataSheets: true,
-          },
-          createdAt: new Date().toISOString(),
-          createdBy: 'system',
-        };
-
-        const userRef = doc(db, 'users', safeUid);
-        await setDoc(userRef, profile);
       }
 
       const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
@@ -325,31 +428,33 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       setUserProfile(profile);
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(profile));
+      setIsLoading(false);
 
-      // Log Login Event to Firestore userActivityLogs
-      logUserActivity(profile, 'login', sessionId);
+      // Log Login Event to Firestore userActivityLogs (non-blocking)
+      logUserActivity(profile, 'login', sessionId).catch(() => {});
 
       return profile;
     } catch (err) {
       console.warn('Firestore profile write fallback:', err);
-      const safeUid = `local_user_${sanitizedEmail.replace(/[^a-z0-9]/g, '_')}`;
-      const defaultBoundClientId = computedRole === 'admin' ? 'all' : 'CL-01';
-      const fallbackProfile: UserProfile = {
-        uid: safeUid,
-        name: customName || (computedRole === 'admin' ? 'Fleet System Admin' : cleanInput),
-        email: sanitizedEmail.includes('@') ? sanitizedEmail : `${sanitizedEmail}@fleet.local`,
-        role: computedRole,
-        clientId: defaultBoundClientId,
-        assignedClientIds: [defaultBoundClientId],
-        permissions: {
-          viewCabs: true,
-          viewDrivers: true,
-          viewExpiryAlerts: true,
-          uploadDataSheets: true,
-        },
-        createdAt: new Date().toISOString(),
-        createdBy: 'system',
-      };
+      const safeUid = isPrimaryAdmin ? 'local_user_admin' : `local_user_${sanitizedEmail.replace(/[^a-z0-9]/g, '_')}`;
+      const fallbackProfile: UserProfile = isPrimaryAdmin
+        ? { ...DEFAULT_ADMIN_PROFILE }
+        : {
+            uid: safeUid,
+            name: customName || cleanInput,
+            email: sanitizedEmail.includes('@') ? sanitizedEmail : `${sanitizedEmail}@fleet.local`,
+            role: 'user',
+            clientId: 'CL-01',
+            assignedClientIds: ['CL-01'],
+            permissions: {
+              viewCabs: true,
+              viewDrivers: true,
+              viewExpiryAlerts: true,
+              uploadDataSheets: true,
+            },
+            createdAt: new Date().toISOString(),
+            createdBy: 'system',
+          };
 
       const sessionId = `sess_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
       sessionStorage.setItem('fleet_session_id', sessionId);
@@ -361,8 +466,9 @@ export const AuthProvider: React.FC<{ children: React.ReactNode }> = ({ children
       });
       setUserProfile(fallbackProfile);
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(fallbackProfile));
+      setIsLoading(false);
 
-      logUserActivity(fallbackProfile, 'login', sessionId);
+      logUserActivity(fallbackProfile, 'login', sessionId).catch(() => {});
 
       return fallbackProfile;
     }
