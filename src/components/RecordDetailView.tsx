@@ -7,7 +7,7 @@ import React, { useState } from 'react';
 import { Cab, Driver } from '../types';
 import { getDocumentStatus, isBgvExemptedByPoliceVerification } from '../utils/expiryEngine';
 import { exportRecordExcelReport } from '../utils/reportGenerator';
-import { getDriverCabNumber } from '../utils/cabDriverUtils';
+import { getDriverCabNumber, getCabAssignedDriver } from '../utils/cabDriverUtils';
 import { useAuth } from '../context/AuthContext';
 import { 
   ArrowLeft, 
@@ -33,9 +33,11 @@ interface RecordDetailViewProps {
   record: Cab | Driver;
   type: 'cab' | 'driver';
   onBack: () => void;
+  cabs?: Cab[];
+  drivers?: Driver[];
 }
 
-export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type, onBack }) => {
+export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type, onBack, cabs = [], drivers = [] }) => {
   const { userProfile, isAdmin } = useAuth();
   const [isExportingExcel, setIsExportingExcel] = useState<boolean>(false);
 
@@ -86,7 +88,7 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
     setIsExportingExcel(true);
     try {
       const uName = userProfile?.email || userProfile?.name || 'Admin User';
-      await exportRecordExcelReport(record, type, uName);
+      await exportRecordExcelReport(record, type, uName, cabs, drivers);
     } catch (err: any) {
       console.error('Failed to export Excel:', err);
       alert('Failed to export Excel: ' + err.message);
@@ -97,6 +99,12 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
 
   if (type === 'cab') {
     const cab = record as Cab;
+    const assignedDriver = getCabAssignedDriver(cab, drivers);
+    const resolvedDriverName = cab.driverName || assignedDriver?.name || 'Unassigned';
+    const resolvedDriverPhone = cab.driverMobileNumber || assignedDriver?.phoneNumbers || 'N/A';
+    const resolvedDriverCompliance = (cab.driverComplianceStatus && cab.driverComplianceStatus !== 'NA')
+      ? cab.driverComplianceStatus
+      : (assignedDriver?.overallComplianceStatus || 'N/A');
 
     // Compliance Documents for Cab
     const cabComplianceDocs = [
@@ -299,7 +307,7 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
               <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
                 Driver Name
               </label>
-              <div className="text-sm font-semibold text-slate-900">{cab.driverName || 'Unassigned'}</div>
+              <div className="text-sm font-semibold text-slate-900">{resolvedDriverName}</div>
             </div>
 
             {/* Driver Mobile Number */}
@@ -307,7 +315,7 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
               <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
                 Driver Mobile Number
               </label>
-              <div className="text-sm font-semibold font-mono text-slate-900">{cab.driverMobileNumber || 'N/A'}</div>
+              <div className="text-sm font-semibold font-mono text-slate-900">{resolvedDriverPhone}</div>
             </div>
 
             {/* Driver Compliance Status */}
@@ -315,8 +323,20 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
               <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
                 Driver Compliance Status
               </label>
-              <div className="text-sm font-semibold text-slate-900">{cab.driverComplianceStatus || 'N/A'}</div>
+              <div className="text-sm font-semibold text-slate-900">{resolvedDriverCompliance}</div>
             </div>
+
+            {assignedDriver && (
+              <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl flex items-center justify-between text-xs text-emerald-900">
+                <span className="font-semibold flex items-center gap-1.5">
+                  <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
+                  Active Driver Record Linked by Mobile: {assignedDriver.name}
+                </span>
+                <span className="font-mono text-[11px] bg-emerald-100/80 px-2 py-0.5 rounded text-emerald-800">
+                  DL: {assignedDriver.driverLicenseNumber || 'N/A'}
+                </span>
+              </div>
+            )}
           </div>
         </div>
 
@@ -414,7 +434,7 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
                 </span>
                 <span className="bg-blue-600/30 text-blue-300 font-mono text-xs px-2.5 py-0.5 rounded-md border border-blue-500/40 font-bold flex items-center gap-1">
                   <Truck className="w-3.5 h-3.5 text-blue-400" />
-                  <span>Cab: {getDriverCabNumber(driver)}</span>
+                  <span>Cab: {getDriverCabNumber(driver, cabs)}</span>
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-1">

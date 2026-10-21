@@ -10,7 +10,7 @@ import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Cab, Driver, Client, Trip, TripRosterEntry } from '../types';
 import { analyzeCabExpiry, analyzeDriverExpiry, getDocumentStatus, isBgvExemptedByPoliceVerification } from './expiryEngine';
-import { getDriverCabNumber } from './cabDriverUtils';
+import { getDriverCabNumber, getCabAssignedDriver } from './cabDriverUtils';
 import { normalizeRegistration } from './registrationUtils';
 import { classifyNotBoardingReason, getTripBoardingClassification } from './tripParser';
 
@@ -119,6 +119,14 @@ export async function exportFleetExcelReport(
     const alertLabel = analysis.worstStatus === 'expired' ? 'Expired' : analysis.worstStatus === 'expiring_soon' ? 'Expiring Soon' : 'OK';
     const expiringDocsText = formatExpiringDocsSummary(analysis.alerts);
 
+    // Cross-reference matched active driver by mobile number
+    const assignedDriver = getCabAssignedDriver(cab, drivers);
+    const resolvedDriverName = cab.driverName || assignedDriver?.name || '';
+    const resolvedDriverPhone = cab.driverMobileNumber || assignedDriver?.phoneNumbers || '';
+    const resolvedDriverCompliance = (cab.driverComplianceStatus && cab.driverComplianceStatus !== 'NA')
+      ? cab.driverComplianceStatus
+      : (assignedDriver?.overallComplianceStatus || 'Compliant');
+
     return {
       'ETS Vehicle ID': cab.etsVehicleId || '',
       'Registration Number': cab.registrationNumber || '',
@@ -141,9 +149,9 @@ export async function exportFleetExcelReport(
       'Vehicle Service Expiry Date': cab.vehicleServiceExpiryDate || '',
       'Fuel Type': cab.fuelType || '',
       'Vehicle Ownership': cab.vehicleOwnership || '',
-      'Assigned Driver Name': cab.driverName || '',
-      'Assigned Driver Phone': cab.driverMobileNumber || '',
-      'Driver Compliance Status': cab.driverComplianceStatus || '',
+      'Assigned Driver Name': resolvedDriverName,
+      'Assigned Driver Phone': resolvedDriverPhone,
+      'Driver Compliance Status': resolvedDriverCompliance,
       'EHS': cab.ehs || '',
       'Comments': cab.comments || '',
       'Approved By': cab.approvedBy || '',
@@ -224,7 +232,9 @@ export async function exportFleetExcelReport(
 export async function exportRecordExcelReport(
   record: Cab | Driver,
   type: 'cab' | 'driver',
-  downloadedBy: string
+  downloadedBy: string,
+  cabsList: Cab[] = [],
+  driversList: Driver[] = []
 ): Promise<string> {
   const dateStr = new Date().toISOString().split('T')[0];
   const wb = XLSX.utils.book_new();
@@ -234,6 +244,13 @@ export async function exportRecordExcelReport(
     const analysis = analyzeCabExpiry(cab);
     const alertLabel = analysis.worstStatus === 'expired' ? 'Expired' : analysis.worstStatus === 'expiring_soon' ? 'Expiring Soon' : 'OK';
     const expiringDocsText = formatExpiringDocsSummary(analysis.alerts);
+
+    const assignedDriver = getCabAssignedDriver(cab, driversList);
+    const resolvedDriverName = cab.driverName || assignedDriver?.name || '';
+    const resolvedDriverPhone = cab.driverMobileNumber || assignedDriver?.phoneNumbers || '';
+    const resolvedDriverCompliance = (cab.driverComplianceStatus && cab.driverComplianceStatus !== 'NA')
+      ? cab.driverComplianceStatus
+      : (assignedDriver?.overallComplianceStatus || 'Compliant');
 
     const detailsRow = [{
       'ETS Vehicle ID': cab.etsVehicleId || '',
@@ -257,9 +274,9 @@ export async function exportRecordExcelReport(
       'Vehicle Service Expiry Date': cab.vehicleServiceExpiryDate || '',
       'Fuel Type': cab.fuelType || '',
       'Vehicle Ownership': cab.vehicleOwnership || '',
-      'Assigned Driver Name': cab.driverName || '',
-      'Assigned Driver Phone': cab.driverMobileNumber || '',
-      'Driver Compliance Status': cab.driverComplianceStatus || '',
+      'Assigned Driver Name': resolvedDriverName,
+      'Assigned Driver Phone': resolvedDriverPhone,
+      'Driver Compliance Status': resolvedDriverCompliance,
       'EHS': cab.ehs || '',
       'Comments': cab.comments || '',
       'Approved By': cab.approvedBy || '',
@@ -304,6 +321,7 @@ export async function exportRecordExcelReport(
     const detailsRow = [{
       'Driver ID': driver.driverId || '',
       'Driver Name': driver.name || '',
+      'Assigned Cab No': getDriverCabNumber(driver, cabsList),
       'Client ID': driver.clientId || '',
       'Client Name': driver.clientName || '',
       'Status': driver.status || 'active',
@@ -384,7 +402,9 @@ export async function exportRecordExcelReport(
 export async function exportRecordPdfReport(
   record: Cab | Driver,
   type: 'cab' | 'driver',
-  downloadedBy: string
+  downloadedBy: string,
+  cabsList: Cab[] = [],
+  driversList: Driver[] = []
 ): Promise<string> {
   const doc = new jsPDF({
     orientation: 'portrait',
@@ -423,6 +443,10 @@ export async function exportRecordPdfReport(
     const cab = record as Cab;
     const fileName = `Cab_Report_${(cab.registrationNumber || cab.etsVehicleId || 'Record').replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr}.pdf`;
 
+    const assignedDriver = getCabAssignedDriver(cab, driversList);
+    const resolvedDriverName = cab.driverName || assignedDriver?.name || 'Unassigned';
+    const resolvedDriverPhone = cab.driverMobileNumber || assignedDriver?.phoneNumbers || 'N/A';
+
     // Title Box
     doc.setFillColor(241, 245, 249);
     doc.roundedRect(14, yPos, 182, 18, 3, 3, 'F');
@@ -450,7 +474,7 @@ export async function exportRecordPdfReport(
         ['Vehicle Type / Fuel', `${cab.vehicleType || 'N/A'} / ${cab.fuelType || 'N/A'}`],
         ['Ownership / Age', `${cab.vehicleOwnership || 'N/A'} (${cab.ageYears !== undefined ? cab.ageYears + ' Yrs' : 'N/A'})`],
         ['Manufacturing / Reg Date', `Mfg: ${cab.manufacturingDate || 'N/A'} | Reg: ${cab.registrationDate || 'N/A'}`],
-        ['Assigned Driver', `${cab.driverName || 'Unassigned'} (${cab.driverMobileNumber || 'N/A'})`],
+        ['Assigned Driver', `${resolvedDriverName} (${resolvedDriverPhone})`],
       ],
       theme: 'grid',
       headStyles: { fillColor: primaryAccent, textColor: 255, fontStyle: 'bold', fontSize: 9 },
@@ -548,6 +572,7 @@ export async function exportRecordPdfReport(
       head: [['Attribute', 'Details']],
       body: [
         ['Driver Name', driver.name || 'N/A'],
+        ['Assigned Cab No', getDriverCabNumber(driver, cabsList)],
         ['Driver ID', driver.driverId || 'N/A'],
         ['Client Name (ID)', `${driver.clientName || 'N/A'} (${driver.clientId || 'N/A'})`],
         ['Phone Number', driver.phoneNumbers || 'N/A'],

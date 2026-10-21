@@ -93,33 +93,29 @@ export function matchesDriverSearch(driver: Driver, query: string, allCabs: Cab[
     const matchingCabs = allCabs.filter(c => matchVehicleRegistration(c.registrationNumber, q) || (c.etsVehicleId || '').toLowerCase().includes(q));
 
     for (const cab of matchingCabs) {
-      const driverNameNorm = (driver.name || '').trim().toLowerCase();
-      const cabDriverNameNorm = (cab.driverName || '').trim().toLowerCase();
       const driverPhoneClean = (driver.phoneNumbers || '').replace(/[^0-9]/g, '');
       const cabDriverPhoneClean = (cab.driverMobileNumber || '').replace(/[^0-9]/g, '');
+      const dPhone10 = driverPhoneClean.length >= 10 ? driverPhoneClean.slice(-10) : '';
+      const cPhone10 = cabDriverPhoneClean.length >= 10 ? cabDriverPhoneClean.slice(-10) : '';
 
-      // Name overlap check
-      if (driverNameNorm && cabDriverNameNorm) {
-        if (driverNameNorm.includes(cabDriverNameNorm) || cabDriverNameNorm.includes(driverNameNorm)) {
+      // 1. Phone number last 10 digits match (Highest automated confidence)
+      if (dPhone10 && cPhone10) {
+        if (dPhone10 === cPhone10) {
           return true;
         }
-        // First name match
-        const dFirst = driverNameNorm.split(' ')[0];
-        const cFirst = cabDriverNameNorm.split(' ')[0];
-        if (dFirst.length >= 3 && dFirst === cFirst) {
-          return true;
-        }
+        // If both have phone numbers and they do NOT match, do not cross-match by name
+        continue;
       }
 
-      // Phone number last 10 digits match
-      if (driverPhoneClean.length >= 10 && cabDriverPhoneClean.length >= 10) {
-        if (driverPhoneClean.slice(-10) === cabDriverPhoneClean.slice(-10)) {
-          return true;
-        }
+      // 2. Driver ID / ETS Vehicle ID match
+      if (driver.driverId && cab.etsVehicleId && driver.driverId.trim().toLowerCase() === cab.etsVehicleId.trim().toLowerCase()) {
+        return true;
       }
 
-      // Driver ID / ETS ID match
-      if (driver.driverId && cab.etsVehicleId && driver.driverId.toLowerCase() === cab.etsVehicleId.toLowerCase()) {
+      // 3. Fallback: Strict Exact full-name match ONLY when phone numbers are not both present
+      const driverNameNorm = (driver.name || '').trim().toLowerCase();
+      const cabDriverNameNorm = (cab.driverName || '').trim().toLowerCase();
+      if (driverNameNorm && cabDriverNameNorm && driverNameNorm === cabDriverNameNorm) {
         return true;
       }
     }

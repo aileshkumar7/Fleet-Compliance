@@ -427,6 +427,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
         record={selectedRecord.record} 
         type={selectedRecord.type} 
         onBack={() => setSelectedRecord(null)} 
+        cabs={cabs}
+        drivers={drivers}
       />
     );
   }
