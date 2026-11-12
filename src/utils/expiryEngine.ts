@@ -4,6 +4,7 @@
  */
 
 import { Cab, Driver } from '../types';
+import { getCabAssignedDrivers, CabAssignedDriversResult } from './cabDriverUtils';
 
 export interface DocumentAlert {
   docName: string;
@@ -20,6 +21,27 @@ export interface EntityExpiryAnalysis<T> {
   worstStatus: 'expired' | 'expiring_soon' | 'valid';
   minDaysRemaining: number;
   alerts: DocumentAlert[];
+}
+
+export interface DualDriverExpiryAlert extends DocumentAlert {
+  origin: 'cab' | 'primary_driver' | 'secondary_driver';
+  driverName?: string;
+  driverRole?: 'Driver 1' | 'Driver 2 (Co-Driver)';
+}
+
+export interface CabCompleteExpiryAnalysis {
+  cab: Cab;
+  cabAnalysis: EntityExpiryAnalysis<Cab>;
+  isDoubleDriver: boolean;
+  assignedDriversInfo: CabAssignedDriversResult;
+  primaryDriver?: Driver;
+  secondaryDriver?: Driver;
+  primaryDriverAnalysis?: EntityExpiryAnalysis<Driver>;
+  secondaryDriverAnalysis?: EntityExpiryAnalysis<Driver>;
+  hasAlert: boolean;
+  worstStatus: 'expired' | 'expiring_soon' | 'valid';
+  minDaysRemaining: number;
+  allAlerts: DualDriverExpiryAlert[];
 }
 
 /**
@@ -258,5 +280,91 @@ export function analyzeDriverExpiry(driver: Driver): EntityExpiryAnalysis<Driver
     worstStatus,
     minDaysRemaining: minDaysRemaining === Infinity ? 9999 : minDaysRemaining,
     alerts
+  };
+}
+
+/**
+ * Evaluates the complete compliance and expiry status of a Cab AND its assigned drivers
+ * (Primary Driver + Secondary / Co-Driver).
+ * Generates document alerts for vehicle documents (Insurance, PUC, Permit, Road Tax, Fitness)
+ * as well as Driver 1 & Driver 2 documents (Driver License, Police Verification, Medical).
+ */
+export function analyzeCabCompleteExpiry(cab: Cab, drivers: Driver[] = []): CabCompleteExpiryAnalysis {
+  const cabAnalysis = analyzeCabExpiry(cab);
+  const assigned = getCabAssignedDrivers(cab, drivers);
+
+  let primaryDriverAnalysis: EntityExpiryAnalysis<Driver> | undefined;
+  let secondaryDriverAnalysis: EntityExpiryAnalysis<Driver> | undefined;
+
+  const allAlerts: DualDriverExpiryAlert[] = [];
+
+  // 1. Vehicle alerts
+  cabAnalysis.alerts.forEach(al => {
+    allAlerts.push({
+      ...al,
+      origin: 'cab',
+    });
+  });
+
+  // 2. Primary driver alerts
+  if (assigned.primary) {
+    primaryDriverAnalysis = analyzeDriverExpiry(assigned.primary);
+    primaryDriverAnalysis.alerts.forEach(al => {
+      allAlerts.push({
+        ...al,
+        origin: 'primary_driver',
+        driverName: assigned.primary?.name,
+        driverRole: 'Driver 1',
+        message: `Driver 1 (${assigned.primary?.name || 'Primary'}): ${al.message}`
+      });
+    });
+  }
+
+  // 3. Secondary / Co-driver alerts
+  if (assigned.secondary) {
+    secondaryDriverAnalysis = analyzeDriverExpiry(assigned.secondary);
+    secondaryDriverAnalysis.alerts.forEach(al => {
+      allAlerts.push({
+        ...al,
+        origin: 'secondary_driver',
+        driverName: assigned.secondary?.name,
+        driverRole: 'Driver 2 (Co-Driver)',
+        message: `Driver 2 (${assigned.secondary?.name || 'Co-Driver'}): ${al.message}`
+      });
+    });
+  }
+
+  let minDays = cabAnalysis.minDaysRemaining;
+  if (primaryDriverAnalysis && primaryDriverAnalysis.minDaysRemaining < minDays) {
+    minDays = primaryDriverAnalysis.minDaysRemaining;
+  }
+  if (secondaryDriverAnalysis && secondaryDriverAnalysis.minDaysRemaining < minDays) {
+    minDays = secondaryDriverAnalysis.minDaysRemaining;
+  }
+
+  const hasExpired = cabAnalysis.worstStatus === 'expired' ||
+    primaryDriverAnalysis?.worstStatus === 'expired' ||
+    secondaryDriverAnalysis?.worstStatus === 'expired';
+
+  const hasExpiringSoon = cabAnalysis.worstStatus === 'expiring_soon' ||
+    primaryDriverAnalysis?.worstStatus === 'expiring_soon' ||
+    secondaryDriverAnalysis?.worstStatus === 'expiring_soon';
+
+  const hasAlert = allAlerts.length > 0;
+  const worstStatus = hasExpired ? 'expired' : (hasExpiringSoon || hasAlert) ? 'expiring_soon' : 'valid';
+
+  return {
+    cab,
+    cabAnalysis,
+    isDoubleDriver: assigned.isDoubleDriver,
+    assignedDriversInfo: assigned,
+    primaryDriver: assigned.primary,
+    secondaryDriver: assigned.secondary,
+    primaryDriverAnalysis,
+    secondaryDriverAnalysis,
+    hasAlert,
+    worstStatus,
+    minDaysRemaining: minDays === Infinity ? 9999 : minDays,
+    allAlerts,
   };
 }

@@ -63,10 +63,12 @@ import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils
 import { classifyNotBoardingReason, getTripBoardingClassification } from '../utils/tripParser';
 import { fleetStorage } from '../lib/fleetStorage';
 
-export type PeriodType = '24h' | '7d' | '1m';
+export type PeriodType = 'till_date' | '24h' | '7d' | '1m';
 
 /**
- * Safely parses Firestore Timestamp or date string/number into JS Date
+ * Safely parses Firestore Timestamp or date string/number into JS Date,
+ * taking into account Indian Standard Time (Asia/Kolkata, UTC+5:30) so dates
+ * never slip into the previous day ("1 day before") in UTC or western environments.
  */
 function parseTripDate(val: any): Date | null {
   if (!val) return null;
@@ -78,7 +80,7 @@ function parseTripDate(val: any): Date | null {
   } else if (typeof val === 'string') {
     const trimmed = val.trim();
     if (!trimmed) return null;
-    // Match DD-MMM-YYYY, DD MMM YYYY, DD/MMM/YYYY e.g. "09-Aug-2026", "9 Aug 2026"
+    // Match DD-MMM-YYYY, DD MMM YYYY, DD/MMM/YYYY e.g. "09-Aug-2026", "9 Aug 2026", "11-Nov-2026"
     const MONTH_MAP: Record<string, number> = {
       jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3,
       may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8,
@@ -92,7 +94,7 @@ function parseTripDate(val: any): Date | null {
       const year = yrRaw < 100 ? 2000 + yrRaw : yrRaw;
       const month = MONTH_MAP[mStr];
       if (month !== undefined) {
-        const hrs = ddMmmYyyy[4] ? parseInt(ddMmmYyyy[4], 10) : 0;
+        const hrs = ddMmmYyyy[4] ? parseInt(ddMmmYyyy[4], 10) : 12;
         const mins = ddMmmYyyy[5] ? parseInt(ddMmmYyyy[5], 10) : 0;
         const secs = ddMmmYyyy[6] ? parseInt(ddMmmYyyy[6], 10) : 0;
         return new Date(year, month, day, hrs, mins, secs);
@@ -104,7 +106,7 @@ function parseTripDate(val: any): Date | null {
       const day = parseInt(ddmmyyyy[1], 10);
       const month = parseInt(ddmmyyyy[2], 10) - 1;
       const year = parseInt(ddmmyyyy[3], 10);
-      const hrs = ddmmyyyy[4] ? parseInt(ddmmyyyy[4], 10) : 0;
+      const hrs = ddmmyyyy[4] ? parseInt(ddmmyyyy[4], 10) : 12;
       const mins = ddmmyyyy[5] ? parseInt(ddmmyyyy[5], 10) : 0;
       const secs = ddmmyyyy[6] ? parseInt(ddmmyyyy[6], 10) : 0;
       return new Date(year, month, day, hrs, mins, secs);
@@ -115,7 +117,7 @@ function parseTripDate(val: any): Date | null {
       const year = parseInt(yyyymmdd[1], 10);
       const month = parseInt(yyyymmdd[2], 10) - 1;
       const day = parseInt(yyyymmdd[3], 10);
-      const hrs = yyyymmdd[4] ? parseInt(yyyymmdd[4], 10) : 0;
+      const hrs = yyyymmdd[4] ? parseInt(yyyymmdd[4], 10) : 12;
       const mins = yyyymmdd[5] ? parseInt(yyyymmdd[5], 10) : 0;
       const secs = yyyymmdd[6] ? parseInt(yyyymmdd[6], 10) : 0;
       return new Date(year, month, day, hrs, mins, secs);
@@ -127,27 +129,52 @@ function parseTripDate(val: any): Date | null {
 
   if (!d || isNaN(d.getTime())) return null;
 
-  // Handle SheetJS/Excel UTC midnight timestamps (00:00:00.000Z)
-  // Convert UTC components to local Date so .getDate() and .toLocaleDateString() match calendar day
-  if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0) {
-    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0);
+  // Use Asia/Kolkata timezone to avoid shifting backward to yesterday (1 day before) in UTC or western servers
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(d);
+    const p: Record<string, string> = {};
+    parts.forEach((pt) => { p[pt.type] = pt.value; });
+    const y = parseInt(p.year, 10);
+    const m = parseInt(p.month, 10) - 1;
+    const day = parseInt(p.day, 10);
+    const hrs = parseInt(p.hour || '12', 10);
+    const mins = parseInt(p.minute || '0', 10);
+    const secs = parseInt(p.second || '0', 10);
+    return new Date(y, m, day, hrs, mins, secs);
+  } catch {
+    if (d.getUTCHours() === 18 && d.getUTCMinutes() === 30) {
+      const adjusted = new Date(d.getTime() + 5.5 * 3600 * 1000);
+      return new Date(adjusted.getFullYear(), adjusted.getMonth(), adjusted.getDate(), 12, 0, 0);
+    }
+    if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0) {
+      return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0, 0);
+    }
+    return d;
   }
-
-  return d;
 }
 
 /**
- * Derives a calendar date-only JS Date (normalized to midnight 00:00:00.000)
- * using exclusively the year, month, and day components, discarding time components.
+ * Derives a calendar date-only JS Date (normalized to midday 12:00:00.000)
+ * using exclusively the year, month, and day components, preventing timezone rollback.
  */
 function getTripCalendarDate(val: any): Date | null {
   const d = parseTripDate(val);
   if (!d) return null;
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
 }
 
 /**
- * Returns epoch timestamp for the calendar date-only midnight representation.
+ * Returns epoch timestamp for the calendar date-only representation.
  */
 function getTripCalendarTime(val: any): number | null {
   const cd = getTripCalendarDate(val);
@@ -186,7 +213,7 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
   const [cabs, setCabs] = useState<Cab[]>([]);
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState<boolean>(true);
-  const [selectedPeriod, setSelectedPeriod] = useState<PeriodType>('7d');
+  const [selectedPeriod, setSelectedPeriod] = useState<PeriodType>('till_date');
   const [selectedSpecificDate, setSelectedSpecificDate] = useState<string | null>(null);
   const [showDatePickerPopover, setShowDatePickerPopover] = useState<boolean>(false);
   const [datePickerInputVal, setDatePickerInputVal] = useState<string>('');
@@ -412,64 +439,59 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
     return new Set(availableTripDatesMap.keys());
   }, [availableTripDatesMap]);
 
-  // SINGLE SHARED REFERENCE DATE for the entire Trip Analytics page:
-  // Defined as the most recent calendar date that actually has trip records in Firestore.
-  // Fallback to today if no trips exist yet.
-  const referenceDateInfo = useMemo(() => {
-    if (availableTripDatesList.length > 0) {
-      const latestItem = availableTripDatesList[0];
-      const d = latestItem.dateObj;
-      const year = d.getFullYear();
-      const month = d.getMonth();
-      const day = d.getDate();
-      const dateKey = latestItem.dateKey;
-      const dateObj = new Date(year, month, day, 0, 0, 0, 0);
-      const formattedLabel = dateObj.toLocaleDateString('en-GB', {
-        day: '2-digit',
-        month: 'short',
-        year: 'numeric',
-      });
-      return {
-        year,
-        month,
-        day,
-        dateKey,
-        dateObj,
-        formattedLabel,
-        hasTrips: true,
-      };
-    }
-
+  // REAL-WORLD CURRENT DATE (Today) in Indian Standard Time (Asia/Kolkata)
+  const currentDateInfo = useMemo(() => {
     const now = new Date();
-    const year = now.getFullYear();
-    const month = now.getMonth();
-    const day = now.getDate();
-    const dateKey = `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
-    const dateObj = new Date(year, month, day, 0, 0, 0, 0);
+    let y = now.getFullYear();
+    let m = now.getMonth();
+    let d = now.getDate();
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+      }).formatToParts(now);
+      const p: Record<string, string> = {};
+      parts.forEach((pt) => { p[pt.type] = pt.value; });
+      y = parseInt(p.year, 10);
+      m = parseInt(p.month, 10) - 1;
+      d = parseInt(p.day, 10);
+    } catch {}
+
+    const dateKey = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const dateObj = new Date(y, m, d, 12, 0, 0, 0);
     const formattedLabel = dateObj.toLocaleDateString('en-GB', {
       day: '2-digit',
       month: 'short',
       year: 'numeric',
     });
     return {
-      year,
-      month,
-      day,
+      year: y,
+      month: m,
+      day: d,
       dateKey,
       dateObj,
       formattedLabel,
-      hasTrips: false,
     };
-  }, [availableTripDatesList]);
+  }, []);
+
+  // REFERENCE DATE: Default to the CURRENT DATE so the date displayed is the
+  // current date and never shifts to 1 day before.
+  const referenceDateInfo = useMemo(() => {
+    return {
+      year: currentDateInfo.year,
+      month: currentDateInfo.month,
+      day: currentDateInfo.day,
+      dateKey: currentDateInfo.dateKey,
+      dateObj: currentDateInfo.dateObj,
+      formattedLabel: currentDateInfo.formattedLabel,
+      hasTrips: availableTripDatesMap.has(currentDateInfo.dateKey),
+    };
+  }, [currentDateInfo, availableTripDatesMap]);
 
   // Today's real YYYY-MM-DD for UI reference
-  const todayKey = useMemo(() => {
-    const now = new Date();
-    const y = now.getFullYear();
-    const m = String(now.getMonth() + 1).padStart(2, '0');
-    const d = String(now.getDate()).padStart(2, '0');
-    return `${y}-${m}-${d}`;
-  }, []);
+  const todayKey = currentDateInfo.dateKey;
 
   const hasDataForToday = useMemo(() => {
     return availableDateSet.has(todayKey);
@@ -495,27 +517,27 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
     return { start, end, dateKey: selectedSpecificDate, dateObj: start, formattedLabel };
   }, [selectedSpecificDate]);
 
-  // Standard Windows derived from the Single Reference Date:
-  // 1. 24 Hours: That single reference calendar date only (00:00:00.000 to 23:59:59.999)
+  // Standard Windows derived from the Current Date:
+  // 1. 24 Hours: Current calendar date only (00:00:00.000 to 23:59:59.999)
   const ref24hStart = useMemo(() => {
-    return new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day, 0, 0, 0, 0);
-  }, [referenceDateInfo]);
+    return new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day, 0, 0, 0, 0);
+  }, [currentDateInfo]);
 
   const ref24hEnd = useMemo(() => {
-    return new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day, 23, 59, 59, 999);
-  }, [referenceDateInfo]);
+    return new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day, 23, 59, 59, 999);
+  }, [currentDateInfo]);
 
-  // 2. 7 Days: The 7 calendar days ending on that reference date (Reference date + preceding 6 days)
+  // 2. 7 Days: The 7 calendar days ending on current date (Today + preceding 6 days)
   const ref7dStart = useMemo(() => {
-    return new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day - 6, 0, 0, 0, 0);
-  }, [referenceDateInfo]);
+    return new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day - 6, 0, 0, 0, 0);
+  }, [currentDateInfo]);
 
-  // 3. 1 Month: The 30 calendar days ending on that reference date (Reference date + preceding 29 days)
+  // 3. 1 Month: The 30 calendar days ending on current date (Today + preceding 29 days)
   const ref1mStart = useMemo(() => {
-    return new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day - 29, 0, 0, 0, 0);
-  }, [referenceDateInfo]);
+    return new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day - 29, 0, 0, 0, 0);
+  }, [currentDateInfo]);
 
-  // Common end boundary for 24h, 7d, and 1m is the end of the reference date
+  // Common end boundary is the end of the current date
   const refPeriodEnd = ref24hEnd;
 
   // Active Scope Cutoffs
@@ -524,6 +546,12 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       return {
         activeStartCutoff: specificDateWindow.start,
         activeEndCutoff: specificDateWindow.end,
+      };
+    }
+    if (selectedPeriod === 'till_date') {
+      return {
+        activeStartCutoff: new Date(2020, 0, 1, 0, 0, 0, 0),
+        activeEndCutoff: ref24hEnd,
       };
     }
     if (selectedPeriod === '24h') {
@@ -820,6 +848,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       });
 
       return {
+        countTillDate: tripSet.size,
+        paxTillDate: totalPassengers,
         count24h: tripSet.size,
         count7d: tripSet.size,
         count1m: tripSet.size,
@@ -829,15 +859,17 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       };
     }
 
-    const ref24hOnlyTime = new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day, 0, 0, 0, 0).getTime();
-    const ref7dStartOnlyTime = new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day - 6, 0, 0, 0, 0).getTime();
-    const ref1mStartOnlyTime = new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day - 29, 0, 0, 0, 0).getTime();
+    const ref24hOnlyTime = new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day, 0, 0, 0, 0).getTime();
+    const ref7dStartOnlyTime = new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day - 6, 0, 0, 0, 0).getTime();
+    const ref1mStartOnlyTime = new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day - 29, 0, 0, 0, 0).getTime();
     const refPeriodEndOnlyTime = ref24hOnlyTime;
 
+    const tripsTillDateSet = new Set<string>();
     const trips24hSet = new Set<string>();
     const trips7dSet = new Set<string>();
     const trips1mSet = new Set<string>();
 
+    let totalPassengersTillDate = 0;
     let totalPassengers24h = 0;
     let totalPassengers7d = 0;
     let totalPassengers1m = 0;
@@ -852,7 +884,15 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       const tripCalendarTime = new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
       const pax = trip.passengerCount || 1;
 
-      // 24 Hours: Reference date only
+      // Till Date: all trips recorded up through end of current date
+      if (tripCalendarTime <= refPeriodEndOnlyTime) {
+        if (!tripsTillDateSet.has(tripId)) {
+          tripsTillDateSet.add(tripId);
+          totalPassengersTillDate += pax;
+        }
+      }
+
+      // 24 Hours: Current calendar date
       if (tripCalendarTime === ref24hOnlyTime) {
         if (!trips24hSet.has(tripId)) {
           trips24hSet.add(tripId);
@@ -860,7 +900,7 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
         }
       }
 
-      // Last 7 Days: 7 calendar days ending on reference date
+      // Last 7 Days: 7 calendar days ending on current date
       if (tripCalendarTime >= ref7dStartOnlyTime && tripCalendarTime <= refPeriodEndOnlyTime) {
         if (!trips7dSet.has(tripId)) {
           trips7dSet.add(tripId);
@@ -868,7 +908,7 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
         }
       }
 
-      // Last 1 Month: 30 calendar days ending on reference date
+      // Last 1 Month: 30 calendar days ending on current date
       if (tripCalendarTime >= ref1mStartOnlyTime && tripCalendarTime <= refPeriodEndOnlyTime) {
         if (!trips1mSet.has(tripId)) {
           trips1mSet.add(tripId);
@@ -878,6 +918,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
     });
 
     return {
+      countTillDate: tripsTillDateSet.size,
+      paxTillDate: totalPassengersTillDate,
       count24h: trips24hSet.size,
       count7d: trips7dSet.size,
       count1m: trips1mSet.size,
@@ -885,14 +927,14 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       pax7d: totalPassengers7d,
       pax1m: totalPassengers1m,
     };
-  }, [trips, specificDateWindow, referenceDateInfo]);
+  }, [trips, specificDateWindow, currentDateInfo]);
 
   // Construct chart data depending on selectedPeriod or specificDateWindow
   const chartData = useMemo(() => {
     if (specificDateWindow || selectedPeriod === '24h') {
       const targetDateOnlyTime = specificDateWindow
         ? new Date(specificDateWindow.start.getFullYear(), specificDateWindow.start.getMonth(), specificDateWindow.start.getDate(), 0, 0, 0, 0).getTime()
-        : new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day, 0, 0, 0, 0).getTime();
+        : new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day, 0, 0, 0, 0).getTime();
 
       // Hourly breakdown (00:00 to 23:00)
       const hourBuckets: { [hour: number]: Set<string> } = {};
@@ -930,12 +972,12 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       });
     }
 
-    const numDays = selectedPeriod === '7d' ? 7 : 30;
+    const numDays = selectedPeriod === 'till_date' ? 14 : selectedPeriod === '7d' ? 7 : 30;
     const dayBuckets: { [dayKey: string]: { tripSet: Set<string>; pax: number; dateObj: Date } } = {};
 
-    // Generate buckets for the N calendar days ending on the shared reference date
+    // Generate buckets for the N calendar days ending on current date
     for (let i = numDays - 1; i >= 0; i--) {
-      const dayObj = new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day - i, 0, 0, 0, 0);
+      const dayObj = new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day - i, 12, 0, 0, 0);
       const dayKey = `${dayObj.getFullYear()}-${(dayObj.getMonth() + 1)
         .toString()
         .padStart(2, '0')}-${dayObj.getDate().toString().padStart(2, '0')}`;
@@ -947,10 +989,12 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       };
     }
 
-    const startDateCutoffOnlyTime = selectedPeriod === '7d'
-      ? new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day - 6, 0, 0, 0, 0).getTime()
-      : new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day - 29, 0, 0, 0, 0).getTime();
-    const endDateCutoffOnlyTime = new Date(referenceDateInfo.year, referenceDateInfo.month, referenceDateInfo.day, 0, 0, 0, 0).getTime();
+    const startDateCutoffOnlyTime = selectedPeriod === 'till_date'
+      ? new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day - 13, 0, 0, 0, 0).getTime()
+      : selectedPeriod === '7d'
+      ? new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day - 6, 0, 0, 0, 0).getTime()
+      : new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day - 29, 0, 0, 0, 0).getTime();
+    const endDateCutoffOnlyTime = new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day, 0, 0, 0, 0).getTime();
 
     trips.forEach((trip) => {
       const tripId = trip.tripId || trip.id;
@@ -1278,19 +1322,23 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
 
   const activePeriodTitle = specificDateWindow
     ? `Specific Date (${specificDateWindow.formattedLabel})`
+    : selectedPeriod === 'till_date'
+    ? `Till Date (Current Data as of ${currentDateInfo.formattedLabel})`
     : selectedPeriod === '24h'
-    ? `Reference Date (${referenceDateInfo.formattedLabel})`
+    ? `Current Date (${currentDateInfo.formattedLabel})`
     : selectedPeriod === '7d'
-    ? `Last 7 Calendar Days (Ending ${referenceDateInfo.formattedLabel})`
-    : `Last 1 Month (30 Days Ending ${referenceDateInfo.formattedLabel})`;
+    ? `Last 7 Calendar Days (Ending ${currentDateInfo.formattedLabel})`
+    : `Last 1 Month (30 Days Ending ${currentDateInfo.formattedLabel})`;
 
   const periodHeadlineText = specificDateWindow
     ? `date ${specificDateWindow.formattedLabel}`
+    : selectedPeriod === 'till_date'
+    ? `till date (${currentDateInfo.formattedLabel})`
     : selectedPeriod === '24h'
-    ? `24 hours (${referenceDateInfo.formattedLabel})`
+    ? `today (${currentDateInfo.formattedLabel})`
     : selectedPeriod === '7d'
-    ? `7 days (ending ${referenceDateInfo.formattedLabel})`
-    : `1 month (ending ${referenceDateInfo.formattedLabel})`;
+    ? `7 days (ending ${currentDateInfo.formattedLabel})`
+    : `1 month (ending ${currentDateInfo.formattedLabel})`;
 
   const activeCabReg = useMemo(() => {
     if (selectedCabReg) return selectedCabReg;
@@ -1753,13 +1801,13 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
             </div>
             <div>
               <p className="text-xs font-bold text-amber-100 flex items-center gap-2 flex-wrap">
-                <span>No trip sheet uploaded for Today ({todayKey}) yet.</span>
+                <span>Fleet Utilization: Current Data Till Date ({currentDateInfo.formattedLabel})</span>
                 <span className="bg-amber-500/20 text-amber-300 font-mono text-[11px] px-2.5 py-0.5 rounded-md border border-amber-500/30 font-semibold">
-                  Showing Latest Data: {latestUploadedDateItem.dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} ({latestUploadedDateItem.count} trips)
+                  Latest Uploaded BA Report: {latestUploadedDateItem.dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })} ({latestUploadedDateItem.count} trips)
                 </span>
               </p>
               <p className="text-[11px] text-amber-300/80 mt-1">
-                All 24-hour metrics, charts, and vehicle utilization tables are currently anchored to the latest uploaded dataset ({latestUploadedDateItem.dateObj.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' })}). Upload a trip sheet for 09 Aug / 10 Aug to refresh live metrics.
+                All cab utilization and analytics are active for Till Date ({currentDateInfo.formattedLabel}). Upload your new daily BA Final Report anytime to sync subsequent trips.
               </p>
             </div>
           </div>
@@ -1770,7 +1818,7 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
               className="bg-amber-600 hover:bg-amber-500 text-white font-bold text-xs px-4 py-2.5 rounded-2xl transition-all shrink-0 shadow-md flex items-center gap-2 cursor-pointer border border-amber-400/50"
             >
               <Truck className="w-4 h-4" />
-              <span>+ Upload 09/10 Aug Data Sheet</span>
+              <span>+ Upload BA Final Report</span>
             </button>
           )}
         </div>
@@ -1906,37 +1954,74 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
         )}
       </div>
 
-      {/* TOP 3 SUMMARY CARDS */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-        {/* Card 1: Last 24 Hours */}
+      {/* TOP 4 SUMMARY CARDS */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+        {/* Card 1: Till Date (Current Data) */}
         <div
           onClick={() => {
-            setSelectedPeriod('24h');
+            setSelectedPeriod('till_date');
             setSelectedSpecificDate(null);
           }}
-          className={`bg-white rounded-3xl p-6 border shadow-sm relative overflow-hidden cursor-pointer transition-all ${
-            !selectedSpecificDate && selectedPeriod === '24h'
-              ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-50/20 scale-[1.01]'
+          className={`bg-white rounded-3xl p-5 border shadow-sm relative overflow-hidden cursor-pointer transition-all ${
+            !selectedSpecificDate && selectedPeriod === 'till_date'
+              ? 'border-blue-600 ring-2 ring-blue-500/20 bg-blue-50/30 scale-[1.01]'
               : 'border-slate-200 hover:border-blue-300 hover:shadow-md'
           }`}
         >
           <div className="flex items-start justify-between gap-2">
             <div>
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
-                Trips — Last 24 Hours ({referenceDateInfo.formattedLabel})
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider block flex items-center gap-1.5">
+                <span>Trips — Till Date</span>
+                <span className="bg-blue-100 text-blue-800 text-[9px] px-1.5 py-0.2 rounded font-black">LIVE</span>
+              </span>
+              <p className="text-3xl font-black text-slate-900 font-mono mt-1">
+                {analyticsSummary.countTillDate.toLocaleString()}
+              </p>
+            </div>
+            <div className={`p-2.5 rounded-2xl ${!selectedSpecificDate && selectedPeriod === 'till_date' ? 'bg-blue-600 text-white' : 'bg-blue-100 text-blue-700'}`}>
+              <CheckCircle2 className="w-5 h-5" />
+            </div>
+          </div>
+
+          <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
+            <span className="text-slate-500 font-medium truncate">
+              As of {currentDateInfo.formattedLabel}
+            </span>
+            <span className="font-bold text-blue-800 font-mono bg-blue-100/80 px-2 py-0.5 rounded-full shrink-0">
+              {analyticsSummary.paxTillDate} Pax
+            </span>
+          </div>
+        </div>
+
+        {/* Card 2: Current Date (24 Hours) */}
+        <div
+          onClick={() => {
+            setSelectedPeriod('24h');
+            setSelectedSpecificDate(null);
+          }}
+          className={`bg-white rounded-3xl p-5 border shadow-sm relative overflow-hidden cursor-pointer transition-all ${
+            !selectedSpecificDate && selectedPeriod === '24h'
+              ? 'border-blue-600 ring-2 ring-blue-500/20 bg-blue-50/30 scale-[1.01]'
+              : 'border-slate-200 hover:border-blue-300 hover:shadow-md'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider block">
+                Current Date ({currentDateInfo.formattedLabel})
               </span>
               <p className="text-3xl font-black text-slate-900 font-mono mt-1">
                 {analyticsSummary.count24h.toLocaleString()}
               </p>
             </div>
-            <div className={`p-3 rounded-2xl ${!selectedSpecificDate && selectedPeriod === '24h' ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-600'}`}>
-              <Clock className="w-6 h-6" />
+            <div className={`p-2.5 rounded-2xl ${!selectedSpecificDate && selectedPeriod === '24h' ? 'bg-blue-600 text-white' : 'bg-blue-50 text-blue-600'}`}>
+              <Clock className="w-5 h-5" />
             </div>
           </div>
 
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
             <span className="text-slate-500 font-medium">
-              Reference Date: {referenceDateInfo.formattedLabel} (00:00–23:59)
+              Today (00:00–23:59)
             </span>
             <span className="font-bold text-blue-800 font-mono bg-blue-100/80 px-2 py-0.5 rounded-full">
               {analyticsSummary.pax24h} Pax
@@ -1944,73 +2029,73 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
           </div>
         </div>
 
-        {/* Card 2: Last 7 Days */}
+        {/* Card 3: Last 7 Days */}
         <div
           onClick={() => {
             setSelectedPeriod('7d');
             setSelectedSpecificDate(null);
           }}
-          className={`bg-white rounded-3xl p-6 border shadow-sm relative overflow-hidden cursor-pointer transition-all ${
+          className={`bg-white rounded-3xl p-5 border shadow-sm relative overflow-hidden cursor-pointer transition-all ${
             !selectedSpecificDate && selectedPeriod === '7d'
-              ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-50/20 scale-[1.01]'
+              ? 'border-blue-600 ring-2 ring-blue-500/20 bg-blue-50/30 scale-[1.01]'
               : 'border-slate-200 hover:border-blue-300 hover:shadow-md'
           }`}
         >
           <div className="flex items-start justify-between gap-2">
             <div>
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider block">
                 Trips — Last 7 Days
               </span>
               <p className="text-3xl font-black text-slate-900 font-mono mt-1">
                 {analyticsSummary.count7d.toLocaleString()}
               </p>
             </div>
-            <div className={`p-3 rounded-2xl ${!selectedSpecificDate && selectedPeriod === '7d' ? 'bg-blue-600 text-white' : 'bg-emerald-50 text-emerald-600'}`}>
-              <Calendar className="w-6 h-6" />
+            <div className={`p-2.5 rounded-2xl ${!selectedSpecificDate && selectedPeriod === '7d' ? 'bg-blue-600 text-white' : 'bg-emerald-50 text-emerald-600'}`}>
+              <Calendar className="w-5 h-5" />
             </div>
           </div>
 
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-            <span className="text-slate-500 font-medium">
-              7 calendar days ending {referenceDateInfo.formattedLabel}
+            <span className="text-slate-500 font-medium truncate">
+              Ending {currentDateInfo.formattedLabel}
             </span>
-            <span className="font-bold text-emerald-800 font-mono bg-emerald-100/80 px-2 py-0.5 rounded-full">
+            <span className="font-bold text-emerald-800 font-mono bg-emerald-100/80 px-2 py-0.5 rounded-full shrink-0">
               {analyticsSummary.pax7d} Pax
             </span>
           </div>
         </div>
 
-        {/* Card 3: Last 1 Month */}
+        {/* Card 4: Last 1 Month */}
         <div
           onClick={() => {
             setSelectedPeriod('1m');
             setSelectedSpecificDate(null);
           }}
-          className={`bg-white rounded-3xl p-6 border shadow-sm relative overflow-hidden cursor-pointer transition-all ${
+          className={`bg-white rounded-3xl p-5 border shadow-sm relative overflow-hidden cursor-pointer transition-all ${
             !selectedSpecificDate && selectedPeriod === '1m'
-              ? 'border-blue-500 ring-2 ring-blue-500/20 bg-blue-50/20 scale-[1.01]'
+              ? 'border-blue-600 ring-2 ring-blue-500/20 bg-blue-50/30 scale-[1.01]'
               : 'border-slate-200 hover:border-blue-300 hover:shadow-md'
           }`}
         >
           <div className="flex items-start justify-between gap-2">
             <div>
-              <span className="text-xs font-bold text-slate-500 uppercase tracking-wider block">
+              <span className="text-xs font-bold text-slate-600 uppercase tracking-wider block">
                 Trips — Last 1 Month
               </span>
               <p className="text-3xl font-black text-slate-900 font-mono mt-1">
                 {analyticsSummary.count1m.toLocaleString()}
               </p>
             </div>
-            <div className={`p-3 rounded-2xl ${!selectedSpecificDate && selectedPeriod === '1m' ? 'bg-blue-600 text-white' : 'bg-purple-50 text-purple-600'}`}>
-              <BarChart3 className="w-6 h-6" />
+            <div className={`p-2.5 rounded-2xl ${!selectedSpecificDate && selectedPeriod === '1m' ? 'bg-blue-600 text-white' : 'bg-purple-50 text-purple-600'}`}>
+              <BarChart3 className="w-5 h-5" />
             </div>
           </div>
 
           <div className="mt-4 pt-3 border-t border-slate-100 flex items-center justify-between text-xs">
-            <span className="text-slate-500 font-medium">
-              30 calendar days ending {referenceDateInfo.formattedLabel}
+            <span className="text-slate-500 font-medium truncate">
+              30 days ending {currentDateInfo.formattedLabel}
             </span>
-            <span className="font-bold text-purple-800 font-mono bg-purple-100/80 px-2 py-0.5 rounded-full">
+            <span className="font-bold text-purple-800 font-mono bg-purple-100/80 px-2 py-0.5 rounded-full shrink-0">
               {analyticsSummary.pax1m} Pax
             </span>
           </div>
@@ -2356,42 +2441,128 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
         {/* Section Header */}
         <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-100 pb-5">
           <div>
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 flex-wrap">
               <div className="w-8 h-8 rounded-xl bg-blue-100 text-blue-700 flex items-center justify-center font-bold shadow-xs">
                 <Car className="w-4.5 h-4.5" />
               </div>
               <h3 className="font-extrabold text-slate-900 text-xl tracking-tight">
                 Cab Utilization Overview
               </h3>
+              <span className="bg-emerald-100 text-emerald-900 text-xs font-bold px-2.5 py-0.5 rounded-full border border-emerald-200">
+                {selectedPeriod === 'till_date' ? `Till Date: ${currentDateInfo.formattedLabel}` : activePeriodTitle}
+              </span>
             </div>
             <p className="text-xs text-slate-500 mt-1">
-              Active registered cabs compared against recorded trip activity during{' '}
-              <strong className="text-slate-800">{activePeriodTitle}</strong>.
+              Real-time active fleet utilization audit from BA Final Report records as of{' '}
+              <strong className="text-slate-800">{currentDateInfo.formattedLabel}</strong>.
             </p>
+
+            {/* Quick Period Switcher Pills for Utilization */}
+            <div className="flex flex-wrap items-center gap-1.5 mt-3 bg-slate-100 p-1 rounded-2xl border border-slate-200 max-w-fit">
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPeriod('till_date');
+                  setSelectedSpecificDate(null);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  !selectedSpecificDate && selectedPeriod === 'till_date'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Till Date (Current Data)
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPeriod('24h');
+                  setSelectedSpecificDate(null);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  !selectedSpecificDate && selectedPeriod === '24h'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Today / 24h
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPeriod('7d');
+                  setSelectedSpecificDate(null);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  !selectedSpecificDate && selectedPeriod === '7d'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Last 7 Days
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setSelectedPeriod('1m');
+                  setSelectedSpecificDate(null);
+                }}
+                className={`px-3 py-1.5 rounded-xl text-xs font-bold transition-all cursor-pointer ${
+                  !selectedSpecificDate && selectedPeriod === '1m'
+                    ? 'bg-blue-600 text-white shadow-xs'
+                    : 'text-slate-600 hover:text-slate-900'
+                }`}
+              >
+                Last 1 Month
+              </button>
+            </div>
           </div>
 
-          {/* Utilization % Metric Banner & Download Action */}
-          <div className="flex flex-wrap items-center gap-3 self-start md:self-auto">
+          {/* Utilization % Metric Banner & Download Actions */}
+          <div className="flex flex-wrap items-center gap-2.5 self-start md:self-auto">
+            <button
+              type="button"
+              onClick={handleExportUtilizationSummary}
+              disabled={isExporting}
+              className="bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white font-bold text-xs px-3.5 py-2.5 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+              title="Download full Fleet Utilization Summary (.xlsx) for active cabs"
+            >
+              <Download className="w-3.5 h-3.5" />
+              <span>{isExporting ? 'Exporting...' : 'Till Date Summary (.xlsx)'}</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportNotUtilizedCabs}
+              disabled={isExporting}
+              className="bg-amber-600 hover:bg-amber-700 disabled:opacity-50 text-white font-bold text-xs px-3.5 py-2.5 rounded-xl transition-all shadow-xs flex items-center gap-1.5 cursor-pointer shrink-0"
+              title="Download Not Utilized cabs list (.xlsx) sorted by longest idle"
+            >
+              <AlertTriangle className="w-3.5 h-3.5" />
+              <span>{isExporting ? 'Exporting...' : 'Not Utilized Report (.xlsx)'}</span>
+            </button>
+
             <button
               type="button"
               onClick={() => setShowUtilizationModal(true)}
               disabled={isExporting}
-              className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-xs px-4 py-3 rounded-2xl transition-all shadow-md hover:shadow-lg flex items-center gap-2 cursor-pointer border border-emerald-500 shrink-0"
+              className="bg-slate-800 hover:bg-slate-700 disabled:opacity-50 text-slate-200 font-bold text-xs px-3 py-2.5 rounded-xl transition-all border border-slate-700 flex items-center gap-1.5 cursor-pointer shrink-0"
+              title="More export options (Date-Wise, custom scopes)"
             >
-              <FileSpreadsheet className="w-4 h-4 text-emerald-100" />
-              <span>{isExporting ? 'Exporting...' : 'Download Utilization Report'}</span>
+              <FileSpreadsheet className="w-3.5 h-3.5 text-blue-400" />
+              <span>More Reports...</span>
             </button>
 
-            <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white px-5 py-3 rounded-2xl shadow-md flex items-center gap-4 border border-slate-800 shrink-0">
+            <div className="bg-gradient-to-r from-slate-900 via-blue-950 to-slate-900 text-white px-4 py-2 rounded-2xl shadow-md flex items-center gap-3 border border-slate-800 shrink-0">
               <div>
                 <span className="text-[10px] uppercase font-bold tracking-wider text-blue-300 block">
-                  Fleet Utilization Rate
+                  Utilization Rate
                 </span>
-                <span className="text-2xl font-black font-mono text-emerald-400">
+                <span className="text-xl font-black font-mono text-emerald-400">
                   {cabUtilizationData.utilizationPct}%
                 </span>
               </div>
-              <div className="w-12 h-12 rounded-full border-4 border-blue-500/30 border-t-emerald-400 flex items-center justify-center text-xs font-bold font-mono bg-slate-800">
+              <div className="w-10 h-10 rounded-full border-4 border-blue-500/30 border-t-emerald-400 flex items-center justify-center text-xs font-bold font-mono bg-slate-800">
                 {Math.round(parseFloat(cabUtilizationData.utilizationPct))}%
               </div>
             </div>

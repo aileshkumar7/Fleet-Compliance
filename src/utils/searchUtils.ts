@@ -55,9 +55,13 @@ export function matchesCabSearch(cab: Cab, query: string): boolean {
   // 2. ETS Vehicle ID / Cab ID
   if ((cab.etsVehicleId || '').toLowerCase().includes(q)) return true;
 
-  // 3. Driver Name / Phone assigned to cab
+  // 3. Driver 1 and Driver 2 (Co-Driver) Name / Phone assigned to cab
   if ((cab.driverName || '').toLowerCase().includes(q)) return true;
   if ((cab.driverMobileNumber || '').toLowerCase().includes(q)) return true;
+  if ((cab.secondDriverName || '').toLowerCase().includes(q)) return true;
+  if ((cab.secondDriverMobileNumber || '').toLowerCase().includes(q)) return true;
+  if ((cab.coDriverName || '').toLowerCase().includes(q)) return true;
+  if ((cab.coDriverMobileNumber || '').toLowerCase().includes(q)) return true;
 
   // 4. Client Name / Vehicle Type / Fuel Type / Contract
   if ((cab.clientName || '').toLowerCase().includes(q)) return true;
@@ -94,16 +98,22 @@ export function matchesDriverSearch(driver: Driver, query: string, allCabs: Cab[
 
     for (const cab of matchingCabs) {
       const driverPhoneClean = (driver.phoneNumbers || '').replace(/[^0-9]/g, '');
-      const cabDriverPhoneClean = (cab.driverMobileNumber || '').replace(/[^0-9]/g, '');
       const dPhone10 = driverPhoneClean.length >= 10 ? driverPhoneClean.slice(-10) : '';
-      const cPhone10 = cabDriverPhoneClean.length >= 10 ? cabDriverPhoneClean.slice(-10) : '';
+
+      // Collect all phones from cab (primary + secondary)
+      const cabPhones = [
+        cab.driverMobileNumber,
+        cab.secondDriverMobileNumber,
+        cab.coDriverMobileNumber,
+        cab.driver2MobileNumber,
+      ].filter(Boolean).map(p => (String(p).replace(/[^0-9]/g, ''))).map(p => p.length >= 10 ? p.slice(-10) : '').filter(Boolean);
 
       // 1. Phone number last 10 digits match (Highest automated confidence)
-      if (dPhone10 && cPhone10) {
-        if (dPhone10 === cPhone10) {
+      if (dPhone10 && cabPhones.length > 0) {
+        if (cabPhones.includes(dPhone10)) {
           return true;
         }
-        // If both have phone numbers and they do NOT match, do not cross-match by name
+        // If driver has a phone and cab has phones and none match, do not match by loose name
         continue;
       }
 
@@ -112,10 +122,16 @@ export function matchesDriverSearch(driver: Driver, query: string, allCabs: Cab[
         return true;
       }
 
-      // 3. Fallback: Strict Exact full-name match ONLY when phone numbers are not both present
+      // 3. Fallback: Strict Exact full-name match against primary or secondary driver name
       const driverNameNorm = (driver.name || '').trim().toLowerCase();
-      const cabDriverNameNorm = (cab.driverName || '').trim().toLowerCase();
-      if (driverNameNorm && cabDriverNameNorm && driverNameNorm === cabDriverNameNorm) {
+      const cabNames = [
+        cab.driverName,
+        cab.secondDriverName,
+        cab.coDriverName,
+        cab.driver2Name,
+      ].filter(Boolean).map(n => String(n).trim().toLowerCase());
+
+      if (driverNameNorm && cabNames.includes(driverNameNorm)) {
         return true;
       }
     }

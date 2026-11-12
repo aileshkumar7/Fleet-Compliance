@@ -7,7 +7,7 @@ import React, { useState } from 'react';
 import { Cab, Driver } from '../types';
 import { getDocumentStatus, isBgvExemptedByPoliceVerification } from '../utils/expiryEngine';
 import { exportRecordExcelReport } from '../utils/reportGenerator';
-import { getDriverCabNumber, getCabAssignedDriver } from '../utils/cabDriverUtils';
+import { getDriverCabNumber, getCabAssignedDriver, getCabAssignedDrivers } from '../utils/cabDriverUtils';
 import { useAuth } from '../context/AuthContext';
 import { 
   ArrowLeft, 
@@ -26,7 +26,8 @@ import {
   Fuel,
   Info,
   Download,
-  FileSpreadsheet
+  FileSpreadsheet,
+  Users
 } from 'lucide-react';
 
 interface RecordDetailViewProps {
@@ -99,12 +100,20 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
 
   if (type === 'cab') {
     const cab = record as Cab;
-    const assignedDriver = getCabAssignedDriver(cab, drivers);
-    const resolvedDriverName = cab.driverName || assignedDriver?.name || 'Unassigned';
-    const resolvedDriverPhone = cab.driverMobileNumber || assignedDriver?.phoneNumbers || 'N/A';
+    const assignedInfo = getCabAssignedDrivers(cab, drivers);
+    const primaryDriver = assignedInfo.primary;
+    const secondaryDriver = assignedInfo.secondary;
+    const resolvedDriverName = assignedInfo.primaryResolvedName;
+    const resolvedDriverPhone = assignedInfo.primaryResolvedPhone;
     const resolvedDriverCompliance = (cab.driverComplianceStatus && cab.driverComplianceStatus !== 'NA')
       ? cab.driverComplianceStatus
-      : (assignedDriver?.overallComplianceStatus || 'N/A');
+      : (primaryDriver?.overallComplianceStatus || 'N/A');
+
+    const resolvedSecDriverName = assignedInfo.secondaryResolvedName;
+    const resolvedSecDriverPhone = assignedInfo.secondaryResolvedPhone;
+    const resolvedSecDriverCompliance = (cab.secondDriverComplianceStatus && cab.secondDriverComplianceStatus !== 'NA')
+      ? cab.secondDriverComplianceStatus
+      : (secondaryDriver?.overallComplianceStatus || 'N/A');
 
     // Compliance Documents for Cab
     const cabComplianceDocs = [
@@ -294,49 +303,201 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
           </div>
         </div>
 
-        {/* SECTION 3: DRIVER ASSIGNED */}
-        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-6 space-y-4">
-          <div className="flex items-center gap-2 border-b border-slate-100 pb-3">
-            <User className="w-5 h-5 text-blue-600" />
-            <h3 className="text-base font-bold text-slate-900">3. Driver Assigned</h3>
+        {/* SECTION 3: DRIVERS ASSIGNED (DUAL DRIVER SUPPORT) */}
+        <div className="bg-white rounded-2xl border border-slate-200 shadow-2xs p-6 space-y-5">
+          <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-wrap gap-2">
+            <div className="flex items-center gap-2">
+              <User className="w-5 h-5 text-blue-600" />
+              <h3 className="text-base font-bold text-slate-900">3. Assigned Drivers & Document Expiries</h3>
+            </div>
+            {assignedInfo.isDoubleDriver ? (
+              <span className="inline-flex items-center gap-1.5 bg-purple-100 text-purple-800 border border-purple-200 text-xs font-bold px-3 py-1 rounded-full uppercase tracking-wider">
+                <Users className="w-3.5 h-3.5 text-purple-600" />
+                <span>Double Driver Assigned</span>
+              </span>
+            ) : (
+              <span className="inline-flex items-center gap-1.5 bg-slate-100 text-slate-700 border border-slate-200 text-xs font-medium px-3 py-1 rounded-full">
+                <span>Single Driver Cab</span>
+              </span>
+            )}
           </div>
 
-          <div className="space-y-3.5">
-            {/* Driver Name */}
-            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
-              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                Driver Name
-              </label>
-              <div className="text-sm font-semibold text-slate-900">{resolvedDriverName}</div>
-            </div>
-
-            {/* Driver Mobile Number */}
-            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
-              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                Driver Mobile Number
-              </label>
-              <div className="text-sm font-semibold font-mono text-slate-900">{resolvedDriverPhone}</div>
-            </div>
-
-            {/* Driver Compliance Status */}
-            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
-              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                Driver Compliance Status
-              </label>
-              <div className="text-sm font-semibold text-slate-900">{resolvedDriverCompliance}</div>
-            </div>
-
-            {assignedDriver && (
-              <div className="bg-emerald-50 border border-emerald-200 p-3 rounded-xl flex items-center justify-between text-xs text-emerald-900">
-                <span className="font-semibold flex items-center gap-1.5">
-                  <ShieldCheck className="w-4 h-4 text-emerald-600 shrink-0" />
-                  Active Driver Record Linked by Mobile: {assignedDriver.name}
-                </span>
-                <span className="font-mono text-[11px] bg-emerald-100/80 px-2 py-0.5 rounded text-emerald-800">
-                  DL: {assignedDriver.driverLicenseNumber || 'N/A'}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+            {/* Driver 1 (Primary Driver) Card */}
+            <div className="bg-slate-50 rounded-2xl p-4 border border-slate-200 space-y-4">
+              <div className="flex items-center justify-between border-b border-slate-200/80 pb-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-lg bg-blue-600 text-white font-black text-xs flex items-center justify-center">
+                    1
+                  </span>
+                  <span className="font-bold text-slate-900 text-sm">Driver 1 (Primary)</span>
+                </div>
+                <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border ${
+                  (resolvedDriverCompliance || '').toLowerCase().includes('compliant')
+                    ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                    : 'bg-amber-50 text-amber-700 border-amber-200'
+                }`}>
+                  {resolvedDriverCompliance}
                 </span>
               </div>
-            )}
+
+              <div className="space-y-2 text-xs">
+                <div>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Name</span>
+                  <span className="font-bold text-slate-900 text-sm">{resolvedDriverName}</span>
+                </div>
+
+                <div>
+                  <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Mobile Number</span>
+                  <span className="font-mono font-semibold text-slate-800">{resolvedDriverPhone || 'N/A'}</span>
+                </div>
+
+                {primaryDriver && (
+                  <div>
+                    <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Driving License (DL)</span>
+                    <span className="font-mono font-semibold text-slate-800">{primaryDriver.driverLicenseNumber || 'N/A'}</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Driver 1 Document Expiries */}
+              <div className="pt-2 border-t border-slate-200/80 space-y-2">
+                <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                  Driver 1 Expiry Checklist
+                </span>
+
+                {primaryDriver ? (
+                  <div className="space-y-1.5 text-xs">
+                    {[
+                      { name: 'Driver License', expiry: primaryDriver.driverLicenseExpiryDate },
+                      ...(isBgvExemptedByPoliceVerification(primaryDriver) ? [] : [{ name: 'BGV', expiry: primaryDriver.bgvExpiryDate }]),
+                      { name: 'Police Verification', expiry: primaryDriver.policeVerificationExpiryDate },
+                      { name: 'Medical Verification', expiry: primaryDriver.medicalVerificationExpiryDate },
+                      { name: 'Eye Test', expiry: primaryDriver.eyeTestExpiryDate },
+                    ].map((d, dIdx) => {
+                      const docAudit = getDocumentStatus(d.name, d.expiry);
+                      return (
+                        <div key={dIdx} className="bg-white p-2.5 rounded-xl border border-slate-200 flex items-center justify-between gap-2">
+                          <div>
+                            <span className="font-semibold text-slate-800 block">{d.name}</span>
+                            <span className="text-[10px] text-slate-500 font-mono">Exp: {d.expiry || 'N/A'}</span>
+                          </div>
+                          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 ${
+                            docAudit.status === 'expired'
+                              ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                              : docAudit.status === 'expiring_soon'
+                              ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                              : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                          }`}>
+                            {docAudit.status === 'expired' ? 'Expired' : docAudit.status === 'expiring_soon' ? 'Expiring Soon' : 'Valid'}
+                          </span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : (
+                  <div className="p-3 bg-slate-100/80 rounded-xl text-slate-500 text-xs italic">
+                    Driver document records can be updated via the Drivers sheet upload.
+                  </div>
+                )}
+              </div>
+            </div>
+
+            {/* Driver 2 (Co-Driver / Second Driver) Card */}
+            <div className={`rounded-2xl p-4 border space-y-4 ${
+              assignedInfo.isDoubleDriver ? 'bg-purple-50/50 border-purple-200' : 'bg-slate-50/60 border-slate-200 border-dashed'
+            }`}>
+              <div className="flex items-center justify-between border-b border-purple-200/60 pb-2">
+                <div className="flex items-center gap-2">
+                  <span className="w-6 h-6 rounded-lg bg-purple-600 text-white font-black text-xs flex items-center justify-center">
+                    2
+                  </span>
+                  <span className="font-bold text-slate-900 text-sm">Driver 2 (Co-Driver)</span>
+                </div>
+                {assignedInfo.isDoubleDriver && (
+                  <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider border ${
+                    (resolvedSecDriverCompliance || '').toLowerCase().includes('compliant')
+                      ? 'bg-emerald-50 text-emerald-700 border-emerald-200'
+                      : 'bg-amber-50 text-amber-700 border-amber-200'
+                  }`}>
+                    {resolvedSecDriverCompliance || 'Compliant'}
+                  </span>
+                )}
+              </div>
+
+              {assignedInfo.isDoubleDriver ? (
+                <>
+                  <div className="space-y-2 text-xs">
+                    <div>
+                      <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Name</span>
+                      <span className="font-bold text-slate-900 text-sm">{resolvedSecDriverName || 'Co-Driver'}</span>
+                    </div>
+
+                    <div>
+                      <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Mobile Number</span>
+                      <span className="font-mono font-semibold text-slate-800">{resolvedSecDriverPhone || 'N/A'}</span>
+                    </div>
+
+                    {secondaryDriver && (
+                      <div>
+                        <span className="text-slate-400 block text-[10px] uppercase font-bold tracking-wider">Driving License (DL)</span>
+                        <span className="font-mono font-semibold text-slate-800">{secondaryDriver.driverLicenseNumber || 'N/A'}</span>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Driver 2 Document Expiries */}
+                  <div className="pt-2 border-t border-purple-200/60 space-y-2">
+                    <span className="text-[10px] font-bold text-slate-500 uppercase tracking-wider block">
+                      Driver 2 Expiry Checklist
+                    </span>
+
+                    {secondaryDriver ? (
+                      <div className="space-y-1.5 text-xs">
+                        {[
+                          { name: 'Driver License', expiry: secondaryDriver.driverLicenseExpiryDate },
+                          ...(isBgvExemptedByPoliceVerification(secondaryDriver) ? [] : [{ name: 'BGV', expiry: secondaryDriver.bgvExpiryDate }]),
+                          { name: 'Police Verification', expiry: secondaryDriver.policeVerificationExpiryDate },
+                          { name: 'Medical Verification', expiry: secondaryDriver.medicalVerificationExpiryDate },
+                          { name: 'Eye Test', expiry: secondaryDriver.eyeTestExpiryDate },
+                        ].map((d, dIdx) => {
+                          const docAudit = getDocumentStatus(d.name, d.expiry);
+                          return (
+                            <div key={dIdx} className="bg-white p-2.5 rounded-xl border border-purple-100 flex items-center justify-between gap-2 shadow-2xs">
+                              <div>
+                                <span className="font-semibold text-slate-800 block">{d.name}</span>
+                                <span className="text-[10px] text-slate-500 font-mono">Exp: {d.expiry || 'N/A'}</span>
+                              </div>
+                              <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full uppercase tracking-wider shrink-0 ${
+                                docAudit.status === 'expired'
+                                  ? 'bg-rose-100 text-rose-800 border border-rose-200'
+                                  : docAudit.status === 'expiring_soon'
+                                  ? 'bg-amber-100 text-amber-800 border border-amber-200'
+                                  : 'bg-emerald-100 text-emerald-800 border border-emerald-200'
+                              }`}>
+                                {docAudit.status === 'expired' ? 'Expired' : docAudit.status === 'expiring_soon' ? 'Expiring Soon' : 'Valid'}
+                              </span>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div className="p-3 bg-purple-100/60 rounded-xl text-purple-900 text-xs">
+                        Co-Driver linked by mobile / name. Full compliance document history can be populated via Driver sheet sync.
+                      </div>
+                    )}
+                  </div>
+                </>
+              ) : (
+                <div className="p-6 text-center space-y-2">
+                  <User className="w-8 h-8 text-slate-300 mx-auto" />
+                  <p className="font-semibold text-slate-600 text-xs">No Co-Driver Assigned</p>
+                  <p className="text-[11px] text-slate-400 max-w-xs mx-auto">
+                    If this vehicle runs dual shifts, assign a second driver by adding secondary driver details in Excel or assigning this cab registration in the drivers roster.
+                  </p>
+                </div>
+              )}
+            </div>
           </div>
         </div>
 

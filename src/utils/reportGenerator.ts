@@ -10,7 +10,7 @@ import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { Cab, Driver, Client, Trip, TripRosterEntry } from '../types';
 import { analyzeCabExpiry, analyzeDriverExpiry, getDocumentStatus, isBgvExemptedByPoliceVerification } from './expiryEngine';
-import { getDriverCabNumber, getCabAssignedDriver } from './cabDriverUtils';
+import { getDriverCabNumber, getCabAssignedDriver, getCabAssignedDrivers } from './cabDriverUtils';
 import { normalizeRegistration } from './registrationUtils';
 import { classifyNotBoardingReason, getTripBoardingClassification } from './tripParser';
 
@@ -119,13 +119,29 @@ export async function exportFleetExcelReport(
     const alertLabel = analysis.worstStatus === 'expired' ? 'Expired' : analysis.worstStatus === 'expiring_soon' ? 'Expiring Soon' : 'OK';
     const expiringDocsText = formatExpiringDocsSummary(analysis.alerts);
 
-    // Cross-reference matched active driver by mobile number
-    const assignedDriver = getCabAssignedDriver(cab, drivers);
-    const resolvedDriverName = cab.driverName || assignedDriver?.name || '';
-    const resolvedDriverPhone = cab.driverMobileNumber || assignedDriver?.phoneNumbers || '';
+    // Cross-reference matched active driver(s) by mobile number (Dual Driver support)
+    const assignedInfo = getCabAssignedDrivers(cab, drivers);
+    const resolvedDriverName = assignedInfo.primaryResolvedName;
+    const resolvedDriverPhone = assignedInfo.primaryResolvedPhone;
     const resolvedDriverCompliance = (cab.driverComplianceStatus && cab.driverComplianceStatus !== 'NA')
       ? cab.driverComplianceStatus
-      : (assignedDriver?.overallComplianceStatus || 'Compliant');
+      : (assignedInfo.primary?.overallComplianceStatus || 'Compliant');
+
+    const d1Expiring = assignedInfo.primary 
+      ? formatExpiringDocsSummary(analyzeDriverExpiry(assignedInfo.primary).alerts) 
+      : 'None';
+
+    const isDouble = assignedInfo.isDoubleDriver;
+    const resolvedSecDriverName = isDouble ? assignedInfo.secondaryResolvedName : '';
+    const resolvedSecDriverPhone = isDouble ? assignedInfo.secondaryResolvedPhone : '';
+    const resolvedSecDriverCompliance = isDouble
+      ? ((cab.secondDriverComplianceStatus && cab.secondDriverComplianceStatus !== 'NA')
+          ? cab.secondDriverComplianceStatus
+          : (assignedInfo.secondary?.overallComplianceStatus || 'Compliant'))
+      : '';
+    const d2Expiring = (isDouble && assignedInfo.secondary)
+      ? formatExpiringDocsSummary(analyzeDriverExpiry(assignedInfo.secondary).alerts)
+      : (isDouble ? 'Pending driver upload' : 'N/A');
 
     return {
       'ETS Vehicle ID': cab.etsVehicleId || '',
@@ -135,23 +151,31 @@ export async function exportFleetExcelReport(
       'Vehicle Type': cab.vehicleType || '',
       'Status': cab.status || 'active',
       'Alert Status': alertLabel,
-      'Expiring Documents': expiringDocsText,
+      'Expiring Vehicle Documents': expiringDocsText,
       'Overall Compliance Status': cab.overallComplianceStatus || 'Compliant',
-      'Manufacturing Date': cab.manufacturingDate || '',
-      'Registration Date': cab.registrationDate || '',
-      'Vehicle Age (Years)': cab.ageYears ?? '',
-      'Induction Date': cab.inductionDate || '',
+      'Double Driver Assigned': isDouble ? 'YES' : 'NO',
+      'Driver 1 Name': resolvedDriverName,
+      'Driver 1 Phone': resolvedDriverPhone,
+      'Driver 1 DL Number': assignedInfo.primary?.driverLicenseNumber || '',
+      'Driver 1 Compliance Status': resolvedDriverCompliance,
+      'Driver 1 Expiring Docs': d1Expiring,
+      'Driver 2 (Co-Driver) Name': resolvedSecDriverName,
+      'Driver 2 Phone': resolvedSecDriverPhone,
+      'Driver 2 DL Number': assignedInfo.secondary?.driverLicenseNumber || '',
+      'Driver 2 Compliance Status': resolvedSecDriverCompliance,
+      'Driver 2 Expiring Docs': d2Expiring,
       'Insurance Expiry Date': cab.insuranceExpiryDate || '',
       'Pollution Certificate Expiry Date': cab.pollutionCertificateExpiryDate || '',
       'Permit Expiry Date': cab.permitExpiryDate || '',
       'Road Tax Expiry Date': cab.roadTaxExpiryDate || '',
       'Fitness Expiry Date': cab.fitnessExpiryDate || '',
       'Vehicle Service Expiry Date': cab.vehicleServiceExpiryDate || '',
+      'Manufacturing Date': cab.manufacturingDate || '',
+      'Registration Date': cab.registrationDate || '',
+      'Vehicle Age (Years)': cab.ageYears ?? '',
+      'Induction Date': cab.inductionDate || '',
       'Fuel Type': cab.fuelType || '',
       'Vehicle Ownership': cab.vehicleOwnership || '',
-      'Assigned Driver Name': resolvedDriverName,
-      'Assigned Driver Phone': resolvedDriverPhone,
-      'Driver Compliance Status': resolvedDriverCompliance,
       'EHS': cab.ehs || '',
       'Comments': cab.comments || '',
       'Approved By': cab.approvedBy || '',
@@ -245,12 +269,21 @@ export async function exportRecordExcelReport(
     const alertLabel = analysis.worstStatus === 'expired' ? 'Expired' : analysis.worstStatus === 'expiring_soon' ? 'Expiring Soon' : 'OK';
     const expiringDocsText = formatExpiringDocsSummary(analysis.alerts);
 
-    const assignedDriver = getCabAssignedDriver(cab, driversList);
-    const resolvedDriverName = cab.driverName || assignedDriver?.name || '';
-    const resolvedDriverPhone = cab.driverMobileNumber || assignedDriver?.phoneNumbers || '';
+    const assignedInfo = getCabAssignedDrivers(cab, driversList);
+    const resolvedDriverName = assignedInfo.primaryResolvedName;
+    const resolvedDriverPhone = assignedInfo.primaryResolvedPhone;
     const resolvedDriverCompliance = (cab.driverComplianceStatus && cab.driverComplianceStatus !== 'NA')
       ? cab.driverComplianceStatus
-      : (assignedDriver?.overallComplianceStatus || 'Compliant');
+      : (assignedInfo.primary?.overallComplianceStatus || 'Compliant');
+
+    const isDouble = assignedInfo.isDoubleDriver;
+    const resolvedSecDriverName = isDouble ? assignedInfo.secondaryResolvedName : '';
+    const resolvedSecDriverPhone = isDouble ? assignedInfo.secondaryResolvedPhone : '';
+    const resolvedSecDriverCompliance = isDouble
+      ? ((cab.secondDriverComplianceStatus && cab.secondDriverComplianceStatus !== 'NA')
+          ? cab.secondDriverComplianceStatus
+          : (assignedInfo.secondary?.overallComplianceStatus || 'Compliant'))
+      : '';
 
     const detailsRow = [{
       'ETS Vehicle ID': cab.etsVehicleId || '',
@@ -262,6 +295,15 @@ export async function exportRecordExcelReport(
       'Alert Status': alertLabel,
       'Expiring Documents': expiringDocsText,
       'Overall Compliance Status': cab.overallComplianceStatus || 'Compliant',
+      'Double Driver Assigned': isDouble ? 'YES' : 'NO',
+      'Driver 1 Name': resolvedDriverName,
+      'Driver 1 Phone': resolvedDriverPhone,
+      'Driver 1 DL': assignedInfo.primary?.driverLicenseNumber || '',
+      'Driver 1 Compliance Status': resolvedDriverCompliance,
+      'Driver 2 (Co-Driver) Name': resolvedSecDriverName || (isDouble ? 'Assigned' : 'None'),
+      'Driver 2 Phone': resolvedSecDriverPhone,
+      'Driver 2 DL': assignedInfo.secondary?.driverLicenseNumber || '',
+      'Driver 2 Compliance Status': resolvedSecDriverCompliance || 'N/A',
       'Manufacturing Date': cab.manufacturingDate || '',
       'Registration Date': cab.registrationDate || '',
       'Vehicle Age (Years)': cab.ageYears ?? '',
@@ -274,24 +316,43 @@ export async function exportRecordExcelReport(
       'Vehicle Service Expiry Date': cab.vehicleServiceExpiryDate || '',
       'Fuel Type': cab.fuelType || '',
       'Vehicle Ownership': cab.vehicleOwnership || '',
-      'Assigned Driver Name': resolvedDriverName,
-      'Assigned Driver Phone': resolvedDriverPhone,
-      'Driver Compliance Status': resolvedDriverCompliance,
       'EHS': cab.ehs || '',
       'Comments': cab.comments || '',
       'Approved By': cab.approvedBy || '',
       'Created Time': cab.createdTime || '',
     }];
 
-    const cabDocs = [
-      { name: 'Insurance', date: cab.insuranceExpiryDate },
-      { name: 'Pollution Certificate (PUC)', date: cab.pollutionCertificateExpiryDate },
-      { name: 'Permit', date: cab.permitExpiryDate },
-      { name: 'Road Tax', date: cab.roadTaxExpiryDate },
-      { name: 'Fitness Certificate', date: cab.fitnessExpiryDate },
+    const allDocsToAudit = [
+      { name: 'Vehicle: Insurance', date: cab.insuranceExpiryDate },
+      { name: 'Vehicle: Pollution Certificate (PUC)', date: cab.pollutionCertificateExpiryDate },
+      { name: 'Vehicle: Permit', date: cab.permitExpiryDate },
+      { name: 'Vehicle: Road Tax', date: cab.roadTaxExpiryDate },
+      { name: 'Vehicle: Fitness Certificate', date: cab.fitnessExpiryDate },
     ];
 
-    const docAuditRows = cabDocs.map(d => {
+    if (assignedInfo.primary) {
+      allDocsToAudit.push(
+        { name: `Driver 1 (${assignedInfo.primary.name}): Driver License`, date: assignedInfo.primary.driverLicenseExpiryDate },
+        { name: `Driver 1 (${assignedInfo.primary.name}): Police Verification`, date: assignedInfo.primary.policeVerificationExpiryDate },
+        { name: `Driver 1 (${assignedInfo.primary.name}): Medical Verification`, date: assignedInfo.primary.medicalVerificationExpiryDate },
+      );
+      if (!isBgvExemptedByPoliceVerification(assignedInfo.primary) && assignedInfo.primary.bgvExpiryDate) {
+        allDocsToAudit.push({ name: `Driver 1 (${assignedInfo.primary.name}): BGV`, date: assignedInfo.primary.bgvExpiryDate });
+      }
+    }
+
+    if (isDouble && assignedInfo.secondary) {
+      allDocsToAudit.push(
+        { name: `Driver 2 (${assignedInfo.secondary.name}): Driver License`, date: assignedInfo.secondary.driverLicenseExpiryDate },
+        { name: `Driver 2 (${assignedInfo.secondary.name}): Police Verification`, date: assignedInfo.secondary.policeVerificationExpiryDate },
+        { name: `Driver 2 (${assignedInfo.secondary.name}): Medical Verification`, date: assignedInfo.secondary.medicalVerificationExpiryDate },
+      );
+      if (!isBgvExemptedByPoliceVerification(assignedInfo.secondary) && assignedInfo.secondary.bgvExpiryDate) {
+        allDocsToAudit.push({ name: `Driver 2 (${assignedInfo.secondary.name}): BGV`, date: assignedInfo.secondary.bgvExpiryDate });
+      }
+    }
+
+    const docAuditRows = allDocsToAudit.map(d => {
       const audit = getDocumentStatus(d.name, d.date);
       return {
         'Document Name': d.name,
@@ -443,9 +504,10 @@ export async function exportRecordPdfReport(
     const cab = record as Cab;
     const fileName = `Cab_Report_${(cab.registrationNumber || cab.etsVehicleId || 'Record').replace(/[^a-zA-Z0-9]/g, '_')}_${dateStr}.pdf`;
 
-    const assignedDriver = getCabAssignedDriver(cab, driversList);
-    const resolvedDriverName = cab.driverName || assignedDriver?.name || 'Unassigned';
-    const resolvedDriverPhone = cab.driverMobileNumber || assignedDriver?.phoneNumbers || 'N/A';
+    const assignedInfo = getCabAssignedDrivers(cab, driversList);
+    const resolvedDriverName = assignedInfo.primaryResolvedName;
+    const resolvedDriverPhone = assignedInfo.primaryResolvedPhone;
+    const isDouble = assignedInfo.isDoubleDriver;
 
     // Title Box
     doc.setFillColor(241, 245, 249);
@@ -459,23 +521,32 @@ export async function exportRecordPdfReport(
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(71, 85, 105);
-    doc.text(`Client Organization: ${cab.clientName || 'General Fleet'} (${cab.clientId || 'CL-01'}) | Status: ${cab.status || 'Active'}`, 18, yPos + 14);
+    doc.text(`Client Organization: ${cab.clientName || 'General Fleet'} (${cab.clientId || 'CL-01'}) | Status: ${cab.status || 'Active'}${isDouble ? ' | [DOUBLE DRIVER ASSIGNED]' : ''}`, 18, yPos + 14);
 
     yPos += 24;
 
     // Vehicle Specifications Table
+    const specsBody = [
+      ['ETS Vehicle ID', cab.etsVehicleId || 'N/A'],
+      ['Registration Number', cab.registrationNumber || 'N/A'],
+      ['Client Name (ID)', `${cab.clientName || 'N/A'} (${cab.clientId || 'N/A'})`],
+      ['Vehicle Type / Fuel', `${cab.vehicleType || 'N/A'} / ${cab.fuelType || 'N/A'}`],
+      ['Ownership / Age', `${cab.vehicleOwnership || 'N/A'} (${cab.ageYears !== undefined ? cab.ageYears + ' Yrs' : 'N/A'})`],
+      ['Manufacturing / Reg Date', `Mfg: ${cab.manufacturingDate || 'N/A'} | Reg: ${cab.registrationDate || 'N/A'}`],
+      ['Driver 1 (Primary)', `${resolvedDriverName} (${resolvedDriverPhone || 'N/A'})${assignedInfo.primary?.driverLicenseNumber ? ` [DL: ${assignedInfo.primary.driverLicenseNumber}]` : ''}`],
+    ];
+
+    if (isDouble) {
+      specsBody.push([
+        'Driver 2 (Co-Driver)',
+        `${assignedInfo.secondaryResolvedName || 'Co-Driver'} (${assignedInfo.secondaryResolvedPhone || 'N/A'})${assignedInfo.secondary?.driverLicenseNumber ? ` [DL: ${assignedInfo.secondary.driverLicenseNumber}]` : ''}`
+      ]);
+    }
+
     autoTable(doc, {
       startY: yPos,
       head: [['Attribute', 'Details']],
-      body: [
-        ['ETS Vehicle ID', cab.etsVehicleId || 'N/A'],
-        ['Registration Number', cab.registrationNumber || 'N/A'],
-        ['Client Name (ID)', `${cab.clientName || 'N/A'} (${cab.clientId || 'N/A'})`],
-        ['Vehicle Type / Fuel', `${cab.vehicleType || 'N/A'} / ${cab.fuelType || 'N/A'}`],
-        ['Ownership / Age', `${cab.vehicleOwnership || 'N/A'} (${cab.ageYears !== undefined ? cab.ageYears + ' Yrs' : 'N/A'})`],
-        ['Manufacturing / Reg Date', `Mfg: ${cab.manufacturingDate || 'N/A'} | Reg: ${cab.registrationDate || 'N/A'}`],
-        ['Assigned Driver', `${resolvedDriverName} (${resolvedDriverPhone})`],
-      ],
+      body: specsBody,
       theme: 'grid',
       headStyles: { fillColor: primaryAccent, textColor: 255, fontStyle: 'bold', fontSize: 9 },
       bodyStyles: { fontSize: 8, textColor: 30 },
@@ -485,14 +556,30 @@ export async function exportRecordPdfReport(
 
     yPos = (doc as any).lastAutoTable.finalY + 8;
 
-    // Compliance Documents Table
+    // Compliance Documents Table (Cab + Driver 1 + Driver 2)
     const cabDocs = [
-      { name: 'Insurance', date: cab.insuranceExpiryDate },
-      { name: 'Pollution Certificate (PUC)', date: cab.pollutionCertificateExpiryDate },
-      { name: 'Permit', date: cab.permitExpiryDate },
-      { name: 'Road Tax', date: cab.roadTaxExpiryDate },
-      { name: 'Fitness Certificate', date: cab.fitnessExpiryDate },
+      { name: 'Vehicle: Insurance', date: cab.insuranceExpiryDate },
+      { name: 'Vehicle: Pollution Certificate (PUC)', date: cab.pollutionCertificateExpiryDate },
+      { name: 'Vehicle: Permit', date: cab.permitExpiryDate },
+      { name: 'Vehicle: Road Tax', date: cab.roadTaxExpiryDate },
+      { name: 'Vehicle: Fitness Certificate', date: cab.fitnessExpiryDate },
     ];
+
+    if (assignedInfo.primary) {
+      cabDocs.push(
+        { name: `Driver 1 (${assignedInfo.primary.name}): DL`, date: assignedInfo.primary.driverLicenseExpiryDate },
+        { name: `Driver 1 (${assignedInfo.primary.name}): Police Verif`, date: assignedInfo.primary.policeVerificationExpiryDate },
+        { name: `Driver 1 (${assignedInfo.primary.name}): Medical`, date: assignedInfo.primary.medicalVerificationExpiryDate },
+      );
+    }
+
+    if (isDouble && assignedInfo.secondary) {
+      cabDocs.push(
+        { name: `Driver 2 (${assignedInfo.secondary.name}): DL`, date: assignedInfo.secondary.driverLicenseExpiryDate },
+        { name: `Driver 2 (${assignedInfo.secondary.name}): Police Verif`, date: assignedInfo.secondary.policeVerificationExpiryDate },
+        { name: `Driver 2 (${assignedInfo.secondary.name}): Medical`, date: assignedInfo.secondary.medicalVerificationExpiryDate },
+      );
+    }
 
     const docBody = cabDocs.map(d => {
       const audit = getDocumentStatus(d.name, d.date);
@@ -666,7 +753,7 @@ export async function exportRecordPdfReport(
 /**
  * Safely parses Firestore Timestamp, JS Date, or date string into JS Date
  */
-function parseTripDateHelper(val: any): Date | null {
+export function parseTripDateHelper(val: any): Date | null {
   if (!val) return null;
   let d: Date | null = null;
   if (val?.toDate && typeof val.toDate === 'function') {
@@ -689,7 +776,7 @@ function parseTripDateHelper(val: any): Date | null {
       const year = yrRaw < 100 ? 2000 + yrRaw : yrRaw;
       const month = MONTH_MAP[mStr];
       if (month !== undefined) {
-        const hrs = ddMmmYyyy[4] ? parseInt(ddMmmYyyy[4], 10) : 0;
+        const hrs = ddMmmYyyy[4] ? parseInt(ddMmmYyyy[4], 10) : 12;
         const mins = ddMmmYyyy[5] ? parseInt(ddMmmYyyy[5], 10) : 0;
         const secs = ddMmmYyyy[6] ? parseInt(ddMmmYyyy[6], 10) : 0;
         return new Date(year, month, day, hrs, mins, secs);
@@ -700,7 +787,7 @@ function parseTripDateHelper(val: any): Date | null {
       const day = parseInt(ddmmyyyy[1], 10);
       const month = parseInt(ddmmyyyy[2], 10) - 1;
       const year = parseInt(ddmmyyyy[3], 10);
-      const hrs = ddmmyyyy[4] ? parseInt(ddmmyyyy[4], 10) : 0;
+      const hrs = ddmmyyyy[4] ? parseInt(ddmmyyyy[4], 10) : 12;
       const mins = ddmmyyyy[5] ? parseInt(ddmmyyyy[5], 10) : 0;
       const secs = ddmmyyyy[6] ? parseInt(ddmmyyyy[6], 10) : 0;
       return new Date(year, month, day, hrs, mins, secs);
@@ -710,7 +797,7 @@ function parseTripDateHelper(val: any): Date | null {
       const year = parseInt(yyyymmdd[1], 10);
       const month = parseInt(yyyymmdd[2], 10) - 1;
       const day = parseInt(yyyymmdd[3], 10);
-      const hrs = yyyymmdd[4] ? parseInt(yyyymmdd[4], 10) : 0;
+      const hrs = yyyymmdd[4] ? parseInt(yyyymmdd[4], 10) : 12;
       const mins = yyyymmdd[5] ? parseInt(yyyymmdd[5], 10) : 0;
       const secs = yyyymmdd[6] ? parseInt(yyyymmdd[6], 10) : 0;
       return new Date(year, month, day, hrs, mins, secs);
@@ -722,13 +809,38 @@ function parseTripDateHelper(val: any): Date | null {
 
   if (!d || isNaN(d.getTime())) return null;
 
-  // Handle SheetJS/Excel UTC midnight timestamps (00:00:00.000Z)
-  // Convert UTC components to local Date so .getDate() and .toLocaleDateString() match calendar day
-  if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0 && d.getUTCSeconds() === 0) {
-    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 0, 0, 0, 0);
+  // Use Asia/Kolkata timezone to avoid shifting backward to yesterday (1 day before) in UTC or western servers
+  try {
+    const formatter = new Intl.DateTimeFormat('en-US', {
+      timeZone: 'Asia/Kolkata',
+      year: 'numeric',
+      month: 'numeric',
+      day: 'numeric',
+      hour: 'numeric',
+      minute: 'numeric',
+      second: 'numeric',
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(d);
+    const p: Record<string, string> = {};
+    parts.forEach((pt) => { p[pt.type] = pt.value; });
+    const y = parseInt(p.year, 10);
+    const m = parseInt(p.month, 10) - 1;
+    const day = parseInt(p.day, 10);
+    const hrs = parseInt(p.hour || '12', 10);
+    const mins = parseInt(p.minute || '0', 10);
+    const secs = parseInt(p.second || '0', 10);
+    return new Date(y, m, day, hrs, mins, secs);
+  } catch {
+    if (d.getUTCHours() === 18 && d.getUTCMinutes() === 30) {
+      const adjusted = new Date(d.getTime() + 5.5 * 3600 * 1000);
+      return new Date(adjusted.getFullYear(), adjusted.getMonth(), adjusted.getDate(), 12, 0, 0);
+    }
+    if (d.getUTCHours() === 0 && d.getUTCMinutes() === 0) {
+      return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), 12, 0, 0, 0);
+    }
+    return d;
   }
-
-  return d;
 }
 
 /**
@@ -737,7 +849,7 @@ function parseTripDateHelper(val: any): Date | null {
 function getTripCalendarTimeHelper(val: any): number | null {
   const d = parseTripDateHelper(val);
   if (!d) return null;
-  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0).getTime();
+  return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0).getTime();
 }
 
 /**
@@ -781,7 +893,14 @@ function getReportFileName(
     }
     return `Trip_${type}_${specificDate}.xlsx`;
   }
-  const periodStr = period === '24h' ? 'Last24Hours' : period === '7d' ? 'Last7Days' : 'Last1Month';
+  const periodStr =
+    period === 'till_date'
+      ? 'TillDate'
+      : period === '24h'
+      ? 'Last24Hours'
+      : period === '7d'
+      ? 'Last7Days'
+      : 'Last1Month';
   const refDateObj = referenceDate || new Date();
   const dateStr = `${refDateObj.getFullYear()}-${String(refDateObj.getMonth() + 1).padStart(2, '0')}-${String(refDateObj.getDate()).padStart(2, '0')}`;
   if (targetCabReg) {
@@ -804,10 +923,10 @@ function getMostRecentTripDate(trips: Trip[]): Date {
   });
   if (latestMs > 0) {
     const d = new Date(latestMs);
-    return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 0, 0, 0, 0);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate(), 12, 0, 0, 0);
   }
   const now = new Date();
-  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+  return new Date(now.getFullYear(), now.getMonth(), now.getDate(), 12, 0, 0, 0);
 }
 
 /**
@@ -815,7 +934,7 @@ function getMostRecentTripDate(trips: Trip[]): Date {
  */
 export async function exportTripSummaryReport(
   trips: Trip[],
-  period: '24h' | '7d' | '1m' | string,
+  period: 'till_date' | '24h' | '7d' | '1m' | string,
   targetCabReg: string | null,
   downloadedBy: string,
   specificDate?: string | null,
@@ -841,7 +960,9 @@ export async function exportTripSummaryReport(
     endDateCutoff = new Date(refYear, refMonth, refDay, 23, 59, 59, 999);
 
     startDateCutoff =
-      period === '24h'
+      period === 'till_date'
+        ? new Date(2020, 0, 1, 0, 0, 0, 0)
+        : period === '24h'
         ? new Date(refYear, refMonth, refDay, 0, 0, 0, 0)
         : period === '7d'
         ? new Date(refYear, refMonth, refDay - 6, 0, 0, 0, 0)
@@ -1168,12 +1289,14 @@ export async function exportTripDetailedReport(
  */
 function getUtilizationReportFileName(
   reportKind: 'Utilization_Summary' | 'Utilization_DateWise' | 'Not_Utilized_Cabs',
-  period: '24h' | '7d' | '1m' | string,
+  period: 'till_date' | '24h' | '7d' | '1m' | string,
   specificDate?: string | null
 ): string {
   let periodTag = '';
   if (specificDate) {
     periodTag = specificDate;
+  } else if (period === 'till_date') {
+    periodTag = 'TillDate';
   } else if (period === '24h') {
     periodTag = '24Hours';
   } else if (period === '7d') {
@@ -1194,7 +1317,7 @@ function getUtilizationReportFileName(
  */
 function calculatePeriodCutoffs(
   trips: Trip[],
-  period: '24h' | '7d' | '1m' | string,
+  period: 'till_date' | '24h' | '7d' | '1m' | string,
   specificDate?: string | null,
   referenceDate?: Date | null
 ): { startDateCutoff: Date; endDateCutoff: Date; effectiveRefDate: Date; daysList: Date[] } {
@@ -1210,7 +1333,7 @@ function calculatePeriodCutoffs(
     const d = parseInt(parts[2], 10);
     startDateCutoff = new Date(y, m, d, 0, 0, 0, 0);
     endDateCutoff = new Date(y, m, d, 23, 59, 59, 999);
-    daysList.push(new Date(y, m, d, 0, 0, 0, 0));
+    daysList.push(new Date(y, m, d, 12, 0, 0, 0));
   } else {
     const refYear = effectiveRefDate.getFullYear();
     const refMonth = effectiveRefDate.getMonth();
@@ -1218,19 +1341,22 @@ function calculatePeriodCutoffs(
 
     endDateCutoff = new Date(refYear, refMonth, refDay, 23, 59, 59, 999);
 
-    if (period === '24h') {
+    if (period === 'till_date') {
+      startDateCutoff = new Date(2020, 0, 1, 0, 0, 0, 0);
+      daysList.push(new Date(refYear, refMonth, refDay, 12, 0, 0, 0));
+    } else if (period === '24h') {
       startDateCutoff = new Date(refYear, refMonth, refDay, 0, 0, 0, 0);
-      daysList.push(new Date(refYear, refMonth, refDay, 0, 0, 0, 0));
+      daysList.push(new Date(refYear, refMonth, refDay, 12, 0, 0, 0));
     } else if (period === '7d') {
       startDateCutoff = new Date(refYear, refMonth, refDay - 6, 0, 0, 0, 0);
       for (let i = 6; i >= 0; i--) {
-        daysList.push(new Date(refYear, refMonth, refDay - i, 0, 0, 0, 0));
+        daysList.push(new Date(refYear, refMonth, refDay - i, 12, 0, 0, 0));
       }
     } else {
       // 1m (30 days)
       startDateCutoff = new Date(refYear, refMonth, refDay - 29, 0, 0, 0, 0);
       for (let i = 29; i >= 0; i--) {
-        daysList.push(new Date(refYear, refMonth, refDay - i, 0, 0, 0, 0));
+        daysList.push(new Date(refYear, refMonth, refDay - i, 12, 0, 0, 0));
       }
     }
   }
@@ -1411,7 +1537,7 @@ export async function exportUtilizationSummaryReport(
     ['Total Utilized', totalUtilized, '', '', '', '', ''],
     ['Total Not Utilized', totalNotUtilized, '', '', '', '', ''],
     ['Utilization %', `${utilizationPct}%`, '', '', '', '', ''],
-    ['Evaluation Scope', specificDate ? `Date: ${specificDate}` : period === '24h' ? '24 Hours' : period === '7d' ? 'Last 7 Days' : 'Last 1 Month', '', '', '', '', ''],
+    ['Evaluation Scope', specificDate ? `Date: ${specificDate}` : period === 'till_date' ? 'Till Date (Current Data)' : period === '24h' ? '24 Hours' : period === '7d' ? 'Last 7 Days' : 'Last 1 Month', '', '', '', '', ''],
     ['Reference Anchor Date', effectiveRefDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }), '', '', '', '', ''],
   ];
 
@@ -1781,7 +1907,7 @@ export async function exportNotUtilizedCabsReport(
     ['Total Active Cabs Evaluated', totalActive, '', '', ''],
     ['Total Cabs Not Utilized', notUtilizedCount, '', '', ''],
     ['Unutilized Fleet Share (%)', `${unutilizedPct}%`, '', '', ''],
-    ['Evaluation Scope', specificDate ? `Date: ${specificDate}` : period === '24h' ? '24 Hours' : period === '7d' ? 'Last 7 Days' : 'Last 1 Month', '', '', ''],
+    ['Evaluation Scope', specificDate ? `Date: ${specificDate}` : period === 'till_date' ? 'Till Date (Current Data)' : period === '24h' ? '24 Hours' : period === '7d' ? 'Last 7 Days' : 'Last 1 Month', '', '', ''],
     ['Reference Anchor Date', effectiveRefDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }), '', '', ''],
   ];
 

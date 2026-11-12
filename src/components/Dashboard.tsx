@@ -8,13 +8,13 @@ import { collection, onSnapshot, query, orderBy, limit, getDocs, writeBatch, doc
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { Driver, Cab, Client, UploadLog, Trip } from '../types';
-import { analyzeCabExpiry, analyzeDriverExpiry } from '../utils/expiryEngine';
+import { analyzeCabExpiry, analyzeDriverExpiry, analyzeCabCompleteExpiry } from '../utils/expiryEngine';
 import { purgeAllDummyData } from '../utils/seedDriversData';
 import { matchesCabSearch, matchesDriverSearch } from '../utils/searchUtils';
-import { getDriverCabNumber } from '../utils/cabDriverUtils';
+import { getDriverCabNumber, getCabAssignedDrivers } from '../utils/cabDriverUtils';
 import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
 import { classifyNotBoardingReason, getTripBoardingClassification } from '../utils/tripParser';
-import { exportBABoardingSummaryReport } from '../utils/reportGenerator';
+import { exportBABoardingSummaryReport, parseTripDateHelper } from '../utils/reportGenerator';
 import { fleetStorage } from '../lib/fleetStorage';
 import { RecordDetailView } from './RecordDetailView';
 import { ReportDownloadModal } from './ReportDownloadModal';
@@ -212,17 +212,43 @@ export const Dashboard: React.FC<DashboardProps> = ({
     return trips.filter(t => matchClient(t.clientName, t.clientId));
   }, [trips, selectedClient]);
 
-  // Date filtering state specifically for BA Boarding Audit & Deductions
-  const [baReportSelectedDate, setBaReportSelectedDate] = useState<string>('all');
+  // REAL-WORLD CURRENT DATE (Today) in Indian Standard Time (Asia/Kolkata)
+  const currentDateInfo = useMemo(() => {
+    const now = new Date();
+    let y = now.getFullYear();
+    let m = now.getMonth();
+    let d = now.getDate();
+    try {
+      const parts = new Intl.DateTimeFormat('en-US', {
+        timeZone: 'Asia/Kolkata',
+        year: 'numeric',
+        month: 'numeric',
+        day: 'numeric',
+      }).formatToParts(now);
+      const p: Record<string, string> = {};
+      parts.forEach((pt) => { p[pt.type] = pt.value; });
+      y = parseInt(p.year, 10);
+      m = parseInt(p.month, 10) - 1;
+      d = parseInt(p.day, 10);
+    } catch {}
+    const dateKey = `${y}-${String(m + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+    const dateObj = new Date(y, m, d, 12, 0, 0, 0);
+    const formattedLabel = dateObj.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+    return { year: y, month: m, day: d, dateKey, dateObj, formattedLabel };
+  }, []);
 
-  // Extract distinct calendar dates for quick BA Report date filtering
+  // Date filtering state specifically for BA Boarding Audit & Deductions ('till_date' default)
+  const [baReportSelectedDate, setBaReportSelectedDate] = useState<string>('till_date');
+
+  // Extract distinct calendar dates for quick BA Report date filtering (timezone-safe)
   const availableTripDates = useMemo(() => {
     const dateMap = new Map<string, { key: string; label: string; count: number; dateObj: Date }>();
     scopedTrips.forEach(t => {
-      let d: Date | null = null;
-      if (t.date?.toDate && typeof t.date.toDate === 'function') d = t.date.toDate();
-      else if (t.date instanceof Date) d = t.date;
-      else if (t.date) d = new Date(t.date);
+      const d = parseTripDateHelper(t.date || (t as any).deploymentTime);
       if (!d || isNaN(d.getTime())) return;
 
       const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
@@ -237,17 +263,21 @@ export const Dashboard: React.FC<DashboardProps> = ({
   // Scoped trips respecting both client selection and BA Report date filter
   const baScopedTrips = useMemo(() => {
     if (baReportSelectedDate === 'all') return scopedTrips;
+    if (baReportSelectedDate === 'till_date') {
+      const todayEnd = new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day, 23, 59, 59, 999).getTime();
+      return scopedTrips.filter(t => {
+        const d = parseTripDateHelper(t.date || (t as any).deploymentTime);
+        if (!d || isNaN(d.getTime())) return false;
+        return d.getTime() <= todayEnd;
+      });
+    }
     return scopedTrips.filter(t => {
-      let d: Date | null = null;
-      if (t.date?.toDate && typeof t.date.toDate === 'function') d = t.date.toDate();
-      else if (t.date instanceof Date) d = t.date;
-      else if (t.date) d = new Date(t.date);
+      const d = parseTripDateHelper(t.date || (t as any).deploymentTime);
       if (!d || isNaN(d.getTime())) return false;
-
       const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
       return key === baReportSelectedDate;
     });
-  }, [scopedTrips, baReportSelectedDate]);
+  }, [scopedTrips, baReportSelectedDate, currentDateInfo]);
 
   // Compute live summary counts strictly respecting selected client filter
   const totalCabsCount = scopedCabs.length;
@@ -373,15 +403,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const activeDrivers = filteredDrivers.filter(d => (d.status || '').toLowerCase() === 'active');
   const inactiveDrivers = filteredDrivers.filter(d => (d.status || '').toLowerCase() === 'inactive');
 
-  // Compute document expiry alerts across all scoped cabs and drivers (Active & Inactive)
+  // Compute document expiry alerts across all scoped cabs (including vehicle & both drivers) and drivers
   const activeCabAlertsCount = scopedCabs
     .filter(c => (c.status || '').toLowerCase() === 'active')
-    .map(analyzeCabExpiry)
+    .map(c => analyzeCabCompleteExpiry(c, scopedDrivers))
     .filter(a => a.hasAlert).length;
 
   const inactiveCabAlertsCount = scopedCabs
     .filter(c => (c.status || '').toLowerCase() === 'inactive')
-    .map(analyzeCabExpiry)
+    .map(c => analyzeCabCompleteExpiry(c, scopedDrivers))
     .filter(a => a.hasAlert).length;
 
   const cabAlertsCount = activeCabAlertsCount + inactiveCabAlertsCount;
@@ -681,6 +711,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   className="bg-transparent text-xs font-bold text-white pr-2 py-0.5 focus:outline-none cursor-pointer"
                   title="Filter BA Report metrics by specific date"
                 >
+                  <option value="till_date" className="bg-slate-900 text-white">Till Date (Current Data - {currentDateInfo.formattedLabel})</option>
                   <option value="all" className="bg-slate-900 text-white">All Dates ({scopedTrips.length} Trips)</option>
                   {availableTripDates.map(d => (
                     <option key={d.key} value={d.key} className="bg-slate-900 text-white">
@@ -1197,7 +1228,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
               ) : (
                 <div className="space-y-3">
                   {activeCabs.map((cab) => {
-                    const expiryAudit = analyzeCabExpiry(cab);
+                    const expiryAudit = analyzeCabCompleteExpiry(cab, scopedDrivers);
+                    const isDouble = expiryAudit.isDoubleDriver;
+
                     return (
                       <div
                         key={cab.id}
@@ -1210,11 +1243,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <h4 className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors text-base font-mono">{cab.registrationNumber || 'N/A'}</h4>
                               <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200">
                                 {cab.etsVehicleId}
                               </span>
+                              {isDouble && (
+                                <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-800 text-[10px] font-black px-2 py-0.5 rounded-md border border-purple-200 uppercase tracking-wider">
+                                  <Users className="w-3 h-3 text-purple-600" />
+                                  <span>Double Driver</span>
+                                </span>
+                              )}
                             </div>
                             <p className="text-xs font-semibold text-slate-500 mt-0.5">{cab.vehicleType || 'Standard Fleet Vehicle'}</p>
                           </div>
@@ -1238,28 +1277,47 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           </div>
                         </div>
 
-                        {/* Triggered Expiry Alerts Messages */}
+                        {/* Triggered Expiry Alerts Messages (Vehicle + Driver 1 + Driver 2) */}
                         {expiryAudit.hasAlert && (
                           <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl space-y-1">
-                            {expiryAudit.alerts.map((al, idx) => (
+                            {expiryAudit.allAlerts.map((al, idx) => (
                               <div key={idx} className="flex items-center justify-between text-[11px] font-semibold text-rose-900">
                                 <span className="flex items-center gap-1">
-                                  <AlertTriangle className="w-3 h-3 text-rose-600" />
+                                  <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />
                                   <span>{al.docName}:</span>
                                 </span>
-                                <span className="font-mono font-bold">{al.message}</span>
+                                <span className="font-mono font-bold text-right text-[10px]">{al.message}</span>
                               </div>
                             ))}
                           </div>
                         )}
 
-                        <div className="pt-2 border-t border-slate-100 flex items-center justify-between text-xs">
-                          <div className="flex items-center gap-1.5 text-slate-700 font-medium">
-                            <span className="text-slate-400">Assigned Driver:</span>
-                            <span className="font-bold text-slate-800">{cab.driverName || 'Unassigned'}</span>
+                        {/* Assigned Drivers Details */}
+                        <div className="pt-2 border-t border-slate-100 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 text-xs">
+                          <div className="space-y-1">
+                            <div className="flex items-center gap-1.5 text-slate-700 font-medium">
+                              <span className="w-4 h-4 rounded bg-blue-100 text-blue-700 text-[9px] font-bold flex items-center justify-center">1</span>
+                              <span className="text-slate-400">Driver 1:</span>
+                              <span className="font-bold text-slate-800">{expiryAudit.assignedDriversInfo.primaryResolvedName}</span>
+                              {expiryAudit.assignedDriversInfo.primaryResolvedPhone && (
+                                <span className="text-slate-500 font-mono text-[11px]">({expiryAudit.assignedDriversInfo.primaryResolvedPhone})</span>
+                              )}
+                            </div>
+
+                            {isDouble && (
+                              <div className="flex items-center gap-1.5 text-purple-950 font-medium">
+                                <span className="w-4 h-4 rounded bg-purple-200 text-purple-800 text-[9px] font-bold flex items-center justify-center">2</span>
+                                <span className="text-purple-600">Co-Driver:</span>
+                                <span className="font-bold text-purple-900">{expiryAudit.assignedDriversInfo.secondaryResolvedName}</span>
+                                {expiryAudit.assignedDriversInfo.secondaryResolvedPhone && (
+                                  <span className="text-purple-700 font-mono text-[11px]">({expiryAudit.assignedDriversInfo.secondaryResolvedPhone})</span>
+                                )}
+                              </div>
+                            )}
                           </div>
+
                           {cab.clientName && (
-                            <span className="text-[11px] text-slate-500 font-medium bg-slate-50 px-2 py-0.5 rounded border border-slate-100">
+                            <span className="text-[11px] text-slate-500 font-medium bg-slate-50 px-2 py-0.5 rounded border border-slate-100 self-start sm:self-auto">
                               {cab.clientName}
                             </span>
                           )}
@@ -1289,7 +1347,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
               ) : (
                 <div className="space-y-3">
                   {inactiveCabs.map((cab) => {
-                    const expiryAudit = analyzeCabExpiry(cab);
+                    const expiryAudit = analyzeCabCompleteExpiry(cab, scopedDrivers);
+                    const isDouble = expiryAudit.isDoubleDriver;
+
                     return (
                       <div
                         key={cab.id}
@@ -1302,11 +1362,17 @@ export const Dashboard: React.FC<DashboardProps> = ({
                       >
                         <div className="flex items-start justify-between gap-3">
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <h4 className="font-bold text-slate-900 group-hover:text-amber-700 transition-colors text-base font-mono">{cab.registrationNumber || 'N/A'}</h4>
                               <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200">
                                 {cab.etsVehicleId}
                               </span>
+                              {isDouble && (
+                                <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-800 text-[10px] font-black px-2 py-0.5 rounded-md border border-purple-200 uppercase tracking-wider">
+                                  <Users className="w-3 h-3 text-purple-600" />
+                                  <span>Double Driver</span>
+                                </span>
+                              )}
                             </div>
                             <p className="text-xs font-semibold text-slate-500 mt-0.5">{cab.vehicleType || 'Standard Fleet Vehicle'}</p>
                           </div>
@@ -1332,13 +1398,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
                         {/* Triggered Expiry Alerts Messages */}
                         {expiryAudit.hasAlert && (
                           <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl space-y-1">
-                            {expiryAudit.alerts.map((al, idx) => (
+                            {expiryAudit.allAlerts.map((al, idx) => (
                               <div key={idx} className="flex items-center justify-between text-[11px] font-semibold text-rose-900">
                                 <span className="flex items-center gap-1">
-                                  <AlertTriangle className="w-3 h-3 text-rose-600" />
+                                  <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />
                                   <span>{al.docName}:</span>
                                 </span>
-                                <span className="font-mono font-bold">{al.message}</span>
+                                <span className="font-mono font-bold text-right text-[10px]">{al.message}</span>
                               </div>
                             ))}
                           </div>
@@ -1348,7 +1414,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           <div className="flex items-center justify-between text-slate-700">
                             <div className="flex items-center gap-1.5 font-medium">
                               <span className="text-slate-400">Assigned Driver:</span>
-                              <span className="font-bold text-slate-800">{cab.driverName || 'Unassigned'}</span>
+                              <span className="font-bold text-slate-800">{expiryAudit.assignedDriversInfo.primaryResolvedName}</span>
+                              {isDouble && (
+                                <span className="text-purple-700 font-bold ml-1">• Co-Driver: {expiryAudit.assignedDriversInfo.secondaryResolvedName}</span>
+                              )}
                             </div>
                             {cab.deactivationDate && (
                               <div className="flex items-center gap-1 text-[11px] text-amber-800 font-mono font-semibold">

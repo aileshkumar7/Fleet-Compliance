@@ -92,6 +92,14 @@ export interface Cab {
   driverName: string;
   driverMobileNumber: string;
   driverComplianceStatus: string;
+  // Dual / Double Driver support
+  secondDriverName?: string;
+  secondDriverMobileNumber?: string;
+  secondDriverComplianceStatus?: string;
+  coDriverName?: string;
+  coDriverMobileNumber?: string;
+  driver2Name?: string;
+  driver2MobileNumber?: string;
   status: 'active' | 'inactive' | string;
   clientId: string;
   uploadBatchId?: string;

@@ -344,6 +344,30 @@ const CAB_FIELD_MAP: Record<string, keyof Cab> = {
   drivername: 'driverName',
   drivermobilenumber: 'driverMobileNumber',
   drivercompliancestatus: 'driverComplianceStatus',
+  // Dual / Double Driver support
+  seconddrivername: 'secondDriverName',
+  seconddriver: 'secondDriverName',
+  driver2name: 'secondDriverName',
+  driver2: 'secondDriverName',
+  codrivername: 'secondDriverName',
+  codriver: 'secondDriverName',
+  '2nddrivername': 'secondDriverName',
+  '2nddriver': 'secondDriverName',
+  seconddrivermobilenumber: 'secondDriverMobileNumber',
+  seconddrivermobile: 'secondDriverMobileNumber',
+  seconddriverphone: 'secondDriverMobileNumber',
+  driver2mobilenumber: 'secondDriverMobileNumber',
+  driver2mobile: 'secondDriverMobileNumber',
+  driver2phone: 'secondDriverMobileNumber',
+  codrivermobilenumber: 'secondDriverMobileNumber',
+  codrivermobile: 'secondDriverMobileNumber',
+  codriverphone: 'secondDriverMobileNumber',
+  '2nddrivermobilenumber': 'secondDriverMobileNumber',
+  '2nddrivermobile': 'secondDriverMobileNumber',
+  '2nddriverphone': 'secondDriverMobileNumber',
+  seconddrivercompliancestatus: 'secondDriverComplianceStatus',
+  driver2compliancestatus: 'secondDriverComplianceStatus',
+  codrivercompliancestatus: 'secondDriverComplianceStatus',
   status: 'status',
   clientid: 'clientId',
 };
@@ -907,6 +931,26 @@ export async function processDataSheetUpload(
         }
       });
 
+      // Auto-detect double driver phones if combined in a single cell (e.g. "8929948148 / 9876543210")
+      if (cabData.driverMobileNumber && !cabData.secondDriverMobileNumber) {
+        const pStr = String(cabData.driverMobileNumber);
+        const parts = pStr.split(/[\/\\,;&|]|\band\b/i).map(s => s.trim()).filter(Boolean);
+        if (parts.length > 1) {
+          cabData.driverMobileNumber = parts[0];
+          cabData.secondDriverMobileNumber = parts[1];
+        }
+      }
+
+      // Auto-detect double driver names if combined in a single cell (e.g. "Ramesh / Suresh")
+      if (cabData.driverName && !cabData.secondDriverName) {
+        const nStr = String(cabData.driverName);
+        const parts = nStr.split(/[\/\\,;&|]|\band\b/i).map(s => s.trim()).filter(Boolean);
+        if (parts.length > 1) {
+          cabData.driverName = parts[0];
+          cabData.secondDriverName = parts[1];
+        }
+      }
+
       const etsVehicleId = cleanString(cabData.etsVehicleId);
       const registrationNumber = cleanString(cabData.registrationNumber);
       const registrationNormalized = normalizeRegistration(registrationNumber) || (etsVehicleId ? normalizeRegistration(etsVehicleId) : '');
@@ -1045,6 +1089,9 @@ export async function processDataSheetUpload(
             driverName: cabData.driverName || '',
             driverMobileNumber: cabData.driverMobileNumber || '',
             driverComplianceStatus: cabData.driverComplianceStatus || 'Pending',
+            secondDriverName: cabData.secondDriverName || '',
+            secondDriverMobileNumber: cabData.secondDriverMobileNumber || '',
+            secondDriverComplianceStatus: cabData.secondDriverComplianceStatus || 'Pending',
             status,
             clientId: cabData.clientId || '',
             uploadBatchId,

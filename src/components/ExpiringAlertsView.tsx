@@ -11,10 +11,12 @@ import { Cab, Driver, Client } from '../types';
 import { 
   analyzeCabExpiry, 
   analyzeDriverExpiry, 
-  EntityExpiryAnalysis 
+  analyzeCabCompleteExpiry,
+  EntityExpiryAnalysis,
+  CabCompleteExpiryAnalysis
 } from '../utils/expiryEngine';
 import { matchesCabSearch, matchesDriverSearch } from '../utils/searchUtils';
-import { getDriverCabNumber } from '../utils/cabDriverUtils';
+import { getDriverCabNumber, getCabAssignedDrivers } from '../utils/cabDriverUtils';
 import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
 import { 
   AlertTriangle, 
@@ -149,9 +151,9 @@ export const ExpiringAlertsView: React.FC = () => {
     })
     .filter(d => matchClient(d.clientName, d.clientId));
 
-  // Analyze scoped cabs and drivers (Active + Inactive)
-  const cabAnalyses: EntityExpiryAnalysis<Cab>[] = scopedCabs
-    .map(analyzeCabExpiry)
+  // Analyze scoped cabs (including vehicle & both drivers) and drivers (Active + Inactive)
+  const cabAnalyses: CabCompleteExpiryAnalysis[] = scopedCabs
+    .map(c => analyzeCabCompleteExpiry(c, scopedDrivers))
     .filter(a => a.hasAlert);
 
   const driverAnalyses: EntityExpiryAnalysis<Driver>[] = scopedDrivers
@@ -163,14 +165,14 @@ export const ExpiringAlertsView: React.FC = () => {
   driverAnalyses.sort((a, b) => a.minDaysRemaining - b.minDaysRemaining);
 
   // Active & Inactive Breakdown Counts
-  const activeCabAlerts = cabAnalyses.filter(a => (a.entity.status || '').toLowerCase() === 'active').length;
-  const inactiveCabAlerts = cabAnalyses.filter(a => (a.entity.status || '').toLowerCase() === 'inactive').length;
+  const activeCabAlerts = cabAnalyses.filter(a => (a.cab.status || '').toLowerCase() === 'active').length;
+  const inactiveCabAlerts = cabAnalyses.filter(a => (a.cab.status || '').toLowerCase() === 'inactive').length;
   const activeDriverAlerts = driverAnalyses.filter(a => (a.entity.status || '').toLowerCase() === 'active').length;
   const inactiveDriverAlerts = driverAnalyses.filter(a => (a.entity.status || '').toLowerCase() === 'inactive').length;
 
   // Apply filters
   const filteredCabAnalyses = cabAnalyses.filter(a => {
-    const matchesSearch = matchesCabSearch(a.entity, searchTerm);
+    const matchesSearch = matchesCabSearch(a.cab, searchTerm);
     if (filterType === 'all') return matchesSearch;
     return matchesSearch && a.worstStatus === filterType;
   });
@@ -362,7 +364,7 @@ export const ExpiringAlertsView: React.FC = () => {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredCabAnalyses.map(({ entity: cab, worstStatus, alerts }) => {
+                  {filteredCabAnalyses.map(({ cab, worstStatus, allAlerts, isDoubleDriver, assignedDriversInfo }) => {
                     const isActive = (cab.status || '').toLowerCase() === 'active';
                     return (
                       <div
@@ -376,7 +378,7 @@ export const ExpiringAlertsView: React.FC = () => {
                         {/* Top Bar with Pulsing Badge */}
                         <div className="flex items-start justify-between gap-2">
                           <div>
-                            <div className="flex items-center gap-2">
+                            <div className="flex items-center gap-2 flex-wrap">
                               <h4 className="font-mono font-bold text-slate-900 text-base">{cab.registrationNumber || 'N/A'}</h4>
                               <span
                                 className={`text-[10px] font-extrabold px-2 py-0.5 rounded-full border uppercase tracking-wider ${
@@ -387,6 +389,12 @@ export const ExpiringAlertsView: React.FC = () => {
                               >
                                 {isActive ? 'Active' : 'Inactive'}
                               </span>
+                              {isDoubleDriver && (
+                                <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-800 text-[10px] font-black px-2 py-0.5 rounded-md border border-purple-200 uppercase tracking-wider">
+                                  <Users className="w-3 h-3 text-purple-600" />
+                                  <span>Double Driver</span>
+                                </span>
+                              )}
                             </div>
                             <div className="flex items-center gap-2 mt-0.5 font-mono text-[11px] text-slate-500">
                               <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{cab.etsVehicleId}</span>
@@ -404,16 +412,35 @@ export const ExpiringAlertsView: React.FC = () => {
                           </div>
                         </div>
 
-                        {/* Client & Driver */}
-                        <div className="text-xs text-slate-600 space-y-1 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
+                        {/* Client & Assigned Drivers */}
+                        <div className="text-xs text-slate-600 space-y-1.5 bg-slate-50 p-2.5 rounded-xl border border-slate-100">
                           <div className="flex justify-between">
                             <span className="text-slate-400">Client:</span>
                             <span className="font-semibold text-slate-800">{getClientDisplayName(cab.clientName, cab.clientId)}</span>
                           </div>
-                          <div className="flex justify-between">
-                            <span className="text-slate-400">Driver:</span>
-                            <span className="font-semibold text-slate-800">{cab.driverName || 'Unassigned'}</span>
+
+                          <div className="flex justify-between items-start">
+                            <span className="text-slate-400">Driver 1:</span>
+                            <span className="font-semibold text-slate-800 text-right">
+                              {assignedDriversInfo.primaryResolvedName}
+                              {assignedDriversInfo.primaryResolvedPhone && (
+                                <span className="text-slate-500 font-mono text-[11px] block">{assignedDriversInfo.primaryResolvedPhone}</span>
+                              )}
+                            </span>
                           </div>
+
+                          {isDoubleDriver && (
+                            <div className="flex justify-between items-start pt-1 border-t border-slate-200/50">
+                              <span className="text-purple-600 font-medium">Co-Driver:</span>
+                              <span className="font-semibold text-purple-900 text-right">
+                                {assignedDriversInfo.secondaryResolvedName}
+                                {assignedDriversInfo.secondaryResolvedPhone && (
+                                  <span className="text-purple-700/80 font-mono text-[11px] block">{assignedDriversInfo.secondaryResolvedPhone}</span>
+                                )}
+                              </span>
+                            </div>
+                          )}
+
                           {!isActive && cab.comments && (
                             <div className="flex justify-between pt-1 border-t border-slate-200/60 text-[11px]">
                               <span className="text-amber-700 font-semibold">Note:</span>
@@ -425,10 +452,10 @@ export const ExpiringAlertsView: React.FC = () => {
                         {/* Specific Triggering Document Alerts List */}
                         <div className="space-y-1.5 pt-1">
                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                            Triggered Certificate Expiries:
+                            Triggered Expiries (Vehicle & Drivers):
                           </span>
                           <div className="space-y-1.5">
-                            {alerts.map((al, idx) => (
+                            {allAlerts.map((al, idx) => (
                               <div
                                 key={idx}
                                 className={`p-2 rounded-lg text-xs flex items-center justify-between gap-2 border ${

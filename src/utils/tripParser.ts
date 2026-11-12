@@ -615,12 +615,14 @@ export function parseExcelDate(val: any): Date | null {
   if (val instanceof Date) {
     if (isNaN(val.getTime())) return null;
     // SheetJS cellDates creates UTC Date objects.
-    // Convert UTC components into local Date so local .getFullYear(), .getMonth(), .getDate() match the calendar date
+    // Convert UTC components into local Date, anchoring midnight date-only cells to 12:00:00 midday
+    // so UTC conversions never slip backward into previous calendar day in western or UTC environments
+    const isMidnight = val.getUTCHours() === 0 && val.getUTCMinutes() === 0 && val.getUTCSeconds() === 0;
     return new Date(
       val.getUTCFullYear(),
       val.getUTCMonth(),
       val.getUTCDate(),
-      val.getUTCHours(),
+      isMidnight ? 12 : val.getUTCHours(),
       val.getUTCMinutes(),
       val.getUTCSeconds()
     );
@@ -631,11 +633,12 @@ export function parseExcelDate(val: any): Date | null {
     if (val <= 0) return null;
     const parsed = XLSX.SSF.parse_date_code(val);
     if (parsed) {
+      const hasTime = (parsed.H && parsed.H > 0) || (parsed.M && parsed.M > 0) || (parsed.S && parsed.S > 0);
       return new Date(
         parsed.y,
         parsed.m - 1,
         parsed.d,
-        parsed.H || 0,
+        hasTime ? (parsed.H || 0) : 12,
         parsed.M || 0,
         Math.floor(parsed.S || 0)
       );
@@ -661,7 +664,7 @@ export function parseExcelDate(val: any): Date | null {
       const year = yrRaw < 100 ? 2000 + yrRaw : yrRaw;
       const month = MONTH_MAP[mStr];
       if (month !== undefined) {
-        const hrs = ddMmmYyyy[4] ? parseInt(ddMmmYyyy[4], 10) : 0;
+        const hrs = ddMmmYyyy[4] ? parseInt(ddMmmYyyy[4], 10) : 12;
         const mins = ddMmmYyyy[5] ? parseInt(ddMmmYyyy[5], 10) : 0;
         const secs = ddMmmYyyy[6] ? parseInt(ddMmmYyyy[6], 10) : 0;
         return new Date(year, month, day, hrs, mins, secs);
@@ -674,7 +677,7 @@ export function parseExcelDate(val: any): Date | null {
       const day = parseInt(ddmmyyyy[1], 10);
       const month = parseInt(ddmmyyyy[2], 10) - 1;
       const year = parseInt(ddmmyyyy[3], 10);
-      const hrs = ddmmyyyy[4] ? parseInt(ddmmyyyy[4], 10) : 0;
+      const hrs = ddmmyyyy[4] ? parseInt(ddmmyyyy[4], 10) : 12;
       const mins = ddmmyyyy[5] ? parseInt(ddmmyyyy[5], 10) : 0;
       const secs = ddmmyyyy[6] ? parseInt(ddmmyyyy[6], 10) : 0;
       const parsed = new Date(year, month, day, hrs, mins, secs);
@@ -687,7 +690,7 @@ export function parseExcelDate(val: any): Date | null {
       const year = parseInt(yyyymmdd[1], 10);
       const month = parseInt(yyyymmdd[2], 10) - 1;
       const day = parseInt(yyyymmdd[3], 10);
-      const hrs = yyyymmdd[4] ? parseInt(yyyymmdd[4], 10) : 0;
+      const hrs = yyyymmdd[4] ? parseInt(yyyymmdd[4], 10) : 12;
       const mins = yyyymmdd[5] ? parseInt(yyyymmdd[5], 10) : 0;
       const secs = yyyymmdd[6] ? parseInt(yyyymmdd[6], 10) : 0;
       const parsed = new Date(year, month, day, hrs, mins, secs);
@@ -697,7 +700,7 @@ export function parseExcelDate(val: any): Date | null {
     const parsed = new Date(trimmed);
     if (!isNaN(parsed.getTime())) {
       if (parsed.getUTCHours() === 0 && parsed.getUTCMinutes() === 0 && parsed.getUTCSeconds() === 0) {
-        return new Date(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate(), 0, 0, 0, 0);
+        return new Date(parsed.getUTCFullYear(), parsed.getUTCMonth(), parsed.getUTCDate(), 12, 0, 0, 0);
       }
       return parsed;
     }
