@@ -410,6 +410,22 @@ const TRIP_HEADER_MAP: Record<string, keyof Trip | 'employeeCount'> = {
   logindate: 'date',
   pickupdate: 'date',
   scheduleddate: 'date',
+  dutydate: 'date',
+  traveldate: 'date',
+  journeydate: 'date',
+  rundate: 'date',
+  rosterdate: 'date',
+  bookingdate: 'date',
+  creationdate: 'date',
+  scheduledtripdate: 'date',
+  actualdate: 'date',
+  operationdate: 'date',
+  billingdate: 'date',
+  badate: 'date',
+  misdate: 'date',
+  reportdate: 'date',
+  cabdate: 'date',
+  vehicledeploymentdate: 'date',
 
   // Registration / Cab No
   registration: 'registration',
@@ -649,14 +665,14 @@ export function parseExcelDate(val: any): Date | null {
     const trimmed = val.trim();
     if (!trimmed) return null;
 
-    // DD-MMM-YYYY, DD MMM YYYY, DD/MMM/YYYY, e.g. "09-Aug-2026", "9 Aug 2026", "09/Aug/2026"
+    // 1. DD-MMM-YYYY, DD MMM YYYY, DD/MMM/YYYY, e.g. "09-Aug-2026", "9 Aug 2026", "11-Nov-26", "11 Nov 2026 10:30 AM"
     const MONTH_MAP: Record<string, number> = {
       jan: 0, january: 0, feb: 1, february: 1, mar: 2, march: 2, apr: 3, april: 3,
       may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8,
       oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
     };
 
-    const ddMmmYyyy = trimmed.match(/^(\d{1,2})[\/\-\.\s]+([A-Za-z]{3,9})[\/\-\.\s]+(\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    const ddMmmYyyy = trimmed.match(/^(\d{1,2})[\/\-\.\s]+([A-Za-z]{3,9})[\/\-\.\s]+(\d{2,4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?)?$/i);
     if (ddMmmYyyy) {
       const day = parseInt(ddMmmYyyy[1], 10);
       const mStr = ddMmmYyyy[2].toLowerCase();
@@ -664,35 +680,45 @@ export function parseExcelDate(val: any): Date | null {
       const year = yrRaw < 100 ? 2000 + yrRaw : yrRaw;
       const month = MONTH_MAP[mStr];
       if (month !== undefined) {
-        const hrs = ddMmmYyyy[4] ? parseInt(ddMmmYyyy[4], 10) : 12;
+        let hrs = ddMmmYyyy[4] ? parseInt(ddMmmYyyy[4], 10) : 12;
         const mins = ddMmmYyyy[5] ? parseInt(ddMmmYyyy[5], 10) : 0;
         const secs = ddMmmYyyy[6] ? parseInt(ddMmmYyyy[6], 10) : 0;
+        const ampm = ddMmmYyyy[7] ? ddMmmYyyy[7].toUpperCase() : null;
+        if (ampm === 'PM' && hrs < 12) hrs += 12;
+        if (ampm === 'AM' && hrs === 12) hrs = 0;
         return new Date(year, month, day, hrs, mins, secs);
       }
     }
 
-    // DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
-    const ddmmyyyy = trimmed.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    // 2. DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY (Standard Indian BA Report format, 2 or 4 digit year, optional time & AM/PM)
+    const ddmmyyyy = trimmed.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?)?$/i);
     if (ddmmyyyy) {
       const day = parseInt(ddmmyyyy[1], 10);
       const month = parseInt(ddmmyyyy[2], 10) - 1;
-      const year = parseInt(ddmmyyyy[3], 10);
-      const hrs = ddmmyyyy[4] ? parseInt(ddmmyyyy[4], 10) : 12;
+      const yrRaw = parseInt(ddmmyyyy[3], 10);
+      const year = yrRaw < 100 ? 2000 + yrRaw : yrRaw;
+      let hrs = ddmmyyyy[4] ? parseInt(ddmmyyyy[4], 10) : 12;
       const mins = ddmmyyyy[5] ? parseInt(ddmmyyyy[5], 10) : 0;
       const secs = ddmmyyyy[6] ? parseInt(ddmmyyyy[6], 10) : 0;
+      const ampm = ddmmyyyy[7] ? ddmmyyyy[7].toUpperCase() : null;
+      if (ampm === 'PM' && hrs < 12) hrs += 12;
+      if (ampm === 'AM' && hrs === 12) hrs = 0;
       const parsed = new Date(year, month, day, hrs, mins, secs);
       if (!isNaN(parsed.getTime())) return parsed;
     }
 
-    // YYYY-MM-DD or YYYY/MM/DD
-    const yyyymmdd = trimmed.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:\s+|T)?(\d{1,2})?:?(\d{2})?:?(\d{2})?/);
+    // 3. YYYY-MM-DD or YYYY/MM/DD (ISO style, optional time & AM/PM)
+    const yyyymmdd = trimmed.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:[,\s|T]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?)?$/i);
     if (yyyymmdd) {
       const year = parseInt(yyyymmdd[1], 10);
       const month = parseInt(yyyymmdd[2], 10) - 1;
       const day = parseInt(yyyymmdd[3], 10);
-      const hrs = yyyymmdd[4] ? parseInt(yyyymmdd[4], 10) : 12;
+      let hrs = yyyymmdd[4] ? parseInt(yyyymmdd[4], 10) : 12;
       const mins = yyyymmdd[5] ? parseInt(yyyymmdd[5], 10) : 0;
       const secs = yyyymmdd[6] ? parseInt(yyyymmdd[6], 10) : 0;
+      const ampm = yyyymmdd[7] ? yyyymmdd[7].toUpperCase() : null;
+      if (ampm === 'PM' && hrs < 12) hrs += 12;
+      if (ampm === 'AM' && hrs === 12) hrs = 0;
       const parsed = new Date(year, month, day, hrs, mins, secs);
       if (!isNaN(parsed.getTime())) return parsed;
     }
@@ -932,14 +958,17 @@ export async function parseAndUploadTripData(
 
     // Fallback search for date if mappedValues.date was not mapped
     if (!mappedValues.date) {
-      for (const [colName, value] of Object.entries(firstRow)) {
-        const norm = normalizeHeader(colName);
-        if (norm.includes('date') || norm.includes('shift') || norm.includes('day')) {
-          if (value !== undefined && value !== null && String(value).trim() !== '') {
-            mappedValues.date = value;
-            break;
+      for (const r of rows) {
+        for (const [colName, value] of Object.entries(r)) {
+          const norm = normalizeHeader(colName);
+          if (norm.includes('date') || norm.includes('shift') || norm.includes('day') || norm.includes('journey') || norm.includes('travel')) {
+            if (value !== undefined && value !== null && String(value).trim() !== '') {
+              mappedValues.date = value;
+              break;
+            }
           }
         }
+        if (mappedValues.date) break;
       }
     }
 

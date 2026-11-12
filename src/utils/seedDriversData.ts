@@ -41,8 +41,12 @@ export async function purgeAllDummyData(): Promise<number> {
       console.log(`[Purge] Successfully removed ${count} dummy/seeded records.`);
     }
     return count;
-  } catch (err) {
-    console.error('Error purging dummy data:', err);
+  } catch (err: any) {
+    if (err?.message?.includes('Quota') || err?.message?.includes('resource-exhausted') || err?.code === 'resource-exhausted') {
+      console.warn('[Purge] Firestore quota limit reached; skipped server purge (operating on local cache).');
+    } else {
+      console.error('Error purging dummy data:', err);
+    }
     return 0;
   }
 }
@@ -99,8 +103,12 @@ export async function cleanUnwantedClients(): Promise<void> {
     if (hasEdits) {
       await batch.commit();
     }
-  } catch (err) {
-    console.error('Error cleaning unwanted clients:', err);
+  } catch (err: any) {
+    if (err?.message?.includes('Quota') || err?.code === 'resource-exhausted') {
+      console.warn('[Clients] Firestore quota limit reached; skipped clients cleanup.');
+    } else {
+      console.error('Error cleaning unwanted clients:', err);
+    }
   }
 }
 
@@ -143,8 +151,12 @@ export async function ensureDefaultUserAccounts(): Promise<void> {
     if (hasEdits) {
       await batch.commit();
     }
-  } catch (err) {
-    console.error('Error ensuring default user accounts:', err);
+  } catch (err: any) {
+    if (err?.message?.includes('Quota') || err?.code === 'resource-exhausted') {
+      console.warn('[Users] Firestore quota limit reached; skipped default accounts check.');
+    } else {
+      console.error('Error ensuring default user accounts:', err);
+    }
   }
 }
 
@@ -156,11 +168,21 @@ export async function seedCompleteDriversDataset(): Promise<{ activeCount: numbe
 }
 
 export async function ensureCompleteDriversDataset(): Promise<void> {
+  if (typeof window !== 'undefined' && localStorage.getItem('fleet_init_cleanup_v2')) {
+    return;
+  }
   try {
     await cleanUnwantedClients();
     await ensureDefaultUserAccounts();
     await purgeAllDummyData();
-  } catch (err) {
-    console.error('Data check failed:', err);
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('fleet_init_cleanup_v2', 'true');
+    }
+  } catch (err: any) {
+    if (err?.message?.includes('Quota') || err?.code === 'resource-exhausted') {
+      console.warn('[Init] Firestore quota limit reached during initial setup check.');
+    } else {
+      console.error('Data check failed:', err);
+    }
   }
 }

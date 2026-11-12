@@ -54,63 +54,31 @@ export const DriversList: React.FC = () => {
       setIsLoading(false);
     };
 
-    // Real-time Drivers listener
-    const q = query(collection(db, 'drivers'));
-    const unsubscribeDrivers = onSnapshot(q, (snap) => {
-      const items: Driver[] = [];
-      snap.forEach(docSnap => {
-        const data = docSnap.data();
-        items.push({ 
-          id: docSnap.id, 
-          ...data,
-          name: data.name || data.driverName || 'N/A',
-          driverId: data.driverId || data.id || 'N/A',
-          phoneNumbers: data.phoneNumbers || data.phone || data.mobile || data.driverMobileNumber || '',
-          clientName: data.clientName || data.client || 'N/A',
-        } as Driver);
-      });
-      rawDrivers = items;
-      applyScope();
-    }, (err) => {
-      console.error('Error listening to drivers:', err);
-      setIsLoading(false);
-    });
-
-    // Real-time Drivers listener from fleetStorage
+    // Real-time Drivers listener from fleetStorage (resilient local cache + Firestore)
     const unsubscribeFleetDrivers = fleetStorage.subscribe<Driver>('drivers', (cachedDrivers) => {
       rawDrivers = cachedDrivers;
       applyScope();
     });
 
-    // Fetch Clients for dropdown filter
-    const unsubscribeClients = onSnapshot(collection(db, 'clients'), (clientSnap) => {
-      const cItems: Client[] = [];
-      clientSnap.forEach(c => cItems.push({ id: c.id, ...c.data() } as Client));
+    // Fetch Clients for dropdown filter via fleetStorage
+    const unsubscribeClients = fleetStorage.subscribe<Client>('clients', (cItems) => {
       rawClients = cItems;
       applyScope();
-    }, (err) => console.error('Error listening to clients in DriversList:', err));
+    });
 
-    // Fetch Cabs for vehicle search cross-referencing
-    const unsubscribeCabs = onSnapshot(collection(db, 'cabs'), (cabSnap) => {
-      const cabItems: Cab[] = [];
-      cabSnap.forEach(c => cabItems.push({ id: c.id, ...c.data() } as Cab));
+    // Fetch Cabs for vehicle search cross-referencing via fleetStorage
+    const unsubscribeCabs = fleetStorage.subscribe<Cab>('cabs', (cabItems) => {
       rawCabs = cabItems;
       applyScope();
-    }, (err) => console.error('Error listening to cabs in DriversList:', err));
+    });
 
-    // Fetch Latest Upload Log
-    const qLog = query(collection(db, 'uploadLogs'), orderBy('uploadedAt', 'desc'), limit(1));
-    const unsubscribeLogs = onSnapshot(qLog, (logSnap) => {
-      if (!logSnap.empty) {
-        const firstDoc = logSnap.docs[0];
-        setLastUploadLog({ id: firstDoc.id, ...firstDoc.data() } as UploadLog);
-      } else {
-        setLastUploadLog(null);
-      }
-    }, (err) => console.error('Error listening to upload logs in DriversList:', err));
+    // Fetch Latest Upload Log via fleetStorage
+    const unsubscribeLogs = fleetStorage.subscribe<UploadLog>('uploadLogs', (logs) => {
+      setLastUploadLog(logs.length > 0 ? logs[0] : null);
+    });
 
     return () => {
-      unsubscribeDrivers();
+      unsubscribeFleetDrivers();
       unsubscribeClients();
       unsubscribeCabs();
       unsubscribeLogs();

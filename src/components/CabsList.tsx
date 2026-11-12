@@ -53,26 +53,6 @@ export const CabsList: React.FC = () => {
       setIsLoading(false);
     };
 
-    const q = query(collection(db, 'cabs'));
-    const unsubscribeCabs = onSnapshot(q, (snap) => {
-      const items: Cab[] = [];
-      snap.forEach(docSnap => {
-        const data = docSnap.data();
-        items.push({ 
-          id: docSnap.id, 
-          ...data,
-          registrationNumber: data.registrationNumber || data.regNumber || data.vehicleNumber || 'N/A',
-          etsVehicleId: data.etsVehicleId || data.vehicleId || data.id || 'N/A',
-          clientName: data.clientName || data.client || 'N/A',
-        } as Cab);
-      });
-      rawCabs = items;
-      applyScope();
-    }, (err) => {
-      console.error('Error listening to cabs:', err);
-      setIsLoading(false);
-    });
-
     // Real-time listener from fleetStorage (resilient local cache + Firestore)
     const unsubscribeFleetStorage = fleetStorage.subscribe<Cab>('cabs', (cachedCabs) => {
       rawCabs = cachedCabs;
@@ -84,25 +64,14 @@ export const CabsList: React.FC = () => {
       applyScope();
     });
 
-    const unsubscribeDrivers = onSnapshot(collection(db, 'drivers'), (driverSnap) => {
-      const dItems: Driver[] = [];
-      driverSnap.forEach(d => dItems.push({ id: d.id, ...d.data() } as Driver));
-      rawDrivers = dItems;
-      applyScope();
-    }, (err) => console.error('Error listening to drivers in CabsList:', err));
-
-    const unsubscribeClients = onSnapshot(collection(db, 'clients'), (clientSnap) => {
-      const cItems: Client[] = [];
-      clientSnap.forEach(c => cItems.push({ id: c.id, ...c.data() } as Client));
+    const unsubscribeClients = fleetStorage.subscribe<Client>('clients', (cItems) => {
       rawClients = cItems;
       applyScope();
-    }, (err) => console.error('Error listening to clients in CabsList:', err));
+    });
 
     return () => {
-      unsubscribeCabs();
       unsubscribeFleetStorage();
       unsubscribeDriversStorage();
-      unsubscribeDrivers();
       unsubscribeClients();
     };
   };

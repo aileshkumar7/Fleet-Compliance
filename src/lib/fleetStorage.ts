@@ -117,6 +117,46 @@ class FleetStorageService {
     };
   }
 
+  private quotaListeners: Set<(isExceeded: boolean) => void> = new Set();
+
+  public isQuotaExceeded(): boolean {
+    return this.isQuotaExhausted;
+  }
+
+  public onQuotaStateChange(cb: (isExceeded: boolean) => void): () => void {
+    this.quotaListeners.add(cb);
+    cb(this.isQuotaExhausted);
+    return () => {
+      this.quotaListeners.delete(cb);
+    };
+  }
+
+  private setQuotaExhaustedState(exceeded: boolean) {
+    if (this.isQuotaExhausted !== exceeded) {
+      this.isQuotaExhausted = exceeded;
+      this.quotaListeners.forEach(cb => {
+        try {
+          cb(this.isQuotaExhausted);
+        } catch (e) {
+          console.warn('Quota listener error:', e);
+        }
+      });
+    }
+  }
+
+  private handleSyncError(name: CollectionName, err: any) {
+    const msg = err?.message || String(err);
+    const isQuota = msg.includes('resource-exhausted') || msg.includes('Quota') || msg.includes('quota') || err?.code === 'resource-exhausted';
+    if (isQuota) {
+      console.warn(`[fleetStorage] Firestore quota limit reached on ${name}. Operating in resilient local cached mode.`);
+      this.setQuotaExhaustedState(true);
+    } else {
+      console.warn(`[fleetStorage] Firestore ${name} sync notice:`, msg);
+    }
+    // Always notify current cached state so UI is never left in an unrendered or spinning state
+    this.notify(name);
+  }
+
   private initFirestoreSync() {
     if (this.initialized) return;
     this.initialized = true;
@@ -128,23 +168,18 @@ class FleetStorageService {
         snap.forEach(d => {
           items.push({ id: d.id, ...d.data() } as Trip);
         });
-        // If Firestore returned records, merge/replace local cache
         if (items.length > 0) {
           this.trips = items;
           this.saveToLocalStorage('trips');
           this.notify('trips');
         } else if (this.trips.length > 0) {
-          // If Firestore is empty but we have local trips, keep local trips
           this.notify('trips');
         }
       }, (err) => {
-        console.warn('Firestore trips sync note:', err.message);
-        if (err.message?.includes('resource-exhausted') || err.message?.includes('Quota')) {
-          this.isQuotaExhausted = true;
-        }
+        this.handleSyncError('trips', err);
       });
     } catch (e) {
-      console.warn('Trips onSnapshot error:', e);
+      this.handleSyncError('trips', e);
     }
 
     // Listen to cabs
@@ -165,10 +200,10 @@ class FleetStorageService {
         this.saveToLocalStorage('cabs');
         this.notify('cabs');
       }, (err) => {
-        console.warn('Firestore cabs sync note:', err.message);
+        this.handleSyncError('cabs', err);
       });
     } catch (e) {
-      console.warn('Cabs onSnapshot error:', e);
+      this.handleSyncError('cabs', e);
     }
 
     // Listen to drivers
@@ -190,10 +225,10 @@ class FleetStorageService {
         this.saveToLocalStorage('drivers');
         this.notify('drivers');
       }, (err) => {
-        console.warn('Firestore drivers sync note:', err.message);
+        this.handleSyncError('drivers', err);
       });
     } catch (e) {
-      console.warn('Drivers onSnapshot error:', e);
+      this.handleSyncError('drivers', e);
     }
 
     // Listen to clients
@@ -207,10 +242,10 @@ class FleetStorageService {
           this.notify('clients');
         }
       }, (err) => {
-        console.warn('Firestore clients sync note:', err.message);
+        this.handleSyncError('clients', err);
       });
     } catch (e) {
-      console.warn('Clients onSnapshot error:', e);
+      this.handleSyncError('clients', e);
     }
 
     // Listen to uploadLogs
@@ -225,10 +260,10 @@ class FleetStorageService {
           this.notify('uploadLogs');
         }
       }, (err) => {
-        console.warn('Firestore uploadLogs sync note:', err.message);
+        this.handleSyncError('uploadLogs', err);
       });
     } catch (e) {
-      console.warn('UploadLogs onSnapshot error:', e);
+      this.handleSyncError('uploadLogs', e);
     }
   }
 

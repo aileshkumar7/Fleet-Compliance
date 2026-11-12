@@ -118,69 +118,37 @@ export const Dashboard: React.FC<DashboardProps> = ({
       setClients(accessibleClients);
     };
 
-    // 1. Subscribe to drivers
-    const unsubscribeDrivers = onSnapshot(collection(db, 'drivers'), (snapshot) => {
-      const items: Driver[] = [];
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        items.push({ 
-          id: docSnap.id, 
-          ...data,
-          name: data.name || data.driverName || 'N/A',
-          driverId: data.driverId || data.id || 'N/A',
-          phoneNumbers: data.phoneNumbers || data.phone || data.mobile || data.driverMobileNumber || '',
-          clientName: data.clientName || data.client || 'N/A',
-        } as Driver);
-      });
+    // 1. Subscribe to drivers via fleetStorage (resilient local cache + Firestore)
+    const unsubscribeDrivers = fleetStorage.subscribe<Driver>('drivers', (items) => {
       rawDrivers = items;
       applyClientScope();
-    }, (err) => console.error('Error listening to drivers:', err));
-
-    // 2. Subscribe to cabs
-    const unsubscribeCabs = onSnapshot(collection(db, 'cabs'), (snapshot) => {
-      const items: Cab[] = [];
-      snapshot.forEach(docSnap => {
-        const data = docSnap.data();
-        items.push({ 
-          id: docSnap.id, 
-          ...data,
-          registrationNumber: data.registrationNumber || data.regNumber || data.vehicleNumber || 'N/A',
-          etsVehicleId: data.etsVehicleId || data.vehicleId || data.id || 'N/A',
-          clientName: data.clientName || data.client || 'N/A',
-        } as Cab);
-      });
-      rawCabs = items;
-      applyClientScope();
-    }, (err) => console.error('Error listening to cabs:', err));
-
-    // 3. Subscribe to clients
-    const unsubscribeClients = onSnapshot(collection(db, 'clients'), (snapshot) => {
-      const items: Client[] = [];
-      snapshot.forEach(docSnap => {
-        items.push({ id: docSnap.id, ...docSnap.data() } as Client);
-      });
-      rawClients = items;
-      applyClientScope();
-    }, (err) => console.error('Error listening to clients:', err));
-
-    // 4. Subscribe to latest upload log for timestamp
-    const qLog = query(collection(db, 'uploadLogs'), orderBy('uploadedAt', 'desc'), limit(1));
-    const unsubscribeLogs = onSnapshot(qLog, (snapshot) => {
-      if (!snapshot.empty) {
-        const firstDoc = snapshot.docs[0];
-        setLastUploadLog({ id: firstDoc.id, ...firstDoc.data() } as UploadLog);
-      } else {
-        setLastUploadLog(null);
-      }
-      setIsLoading(false);
-    }, (err) => {
-      console.error('Error listening to uploadLogs:', err);
       setIsLoading(false);
     });
 
-    // 5. Subscribe to trips collection via fleetStorage (resilient local cache + Firestore)
+    // 2. Subscribe to cabs via fleetStorage (resilient local cache + Firestore)
+    const unsubscribeCabs = fleetStorage.subscribe<Cab>('cabs', (items) => {
+      rawCabs = items;
+      applyClientScope();
+      setIsLoading(false);
+    });
+
+    // 3. Subscribe to clients via fleetStorage (resilient local cache + Firestore)
+    const unsubscribeClients = fleetStorage.subscribe<Client>('clients', (items) => {
+      rawClients = items;
+      applyClientScope();
+      setIsLoading(false);
+    });
+
+    // 4. Subscribe to uploadLogs via fleetStorage
+    const unsubscribeLogs = fleetStorage.subscribe<UploadLog>('uploadLogs', (items) => {
+      setLastUploadLog(items.length > 0 ? items[0] : null);
+      setIsLoading(false);
+    });
+
+    // 5. Subscribe to trips collection via fleetStorage
     const unsubscribeTrips = fleetStorage.subscribe<Trip>('trips', (items) => {
       setTrips(items);
+      setIsLoading(false);
     });
 
     return () => {
@@ -260,15 +228,48 @@ export const Dashboard: React.FC<DashboardProps> = ({
     return Array.from(dateMap.values()).sort((a, b) => b.dateObj.getTime() - a.dateObj.getTime());
   }, [scopedTrips]);
 
+  const latestUploadedDateItem = useMemo(() => {
+    return availableTripDates.length > 0 ? availableTripDates[0] : null;
+  }, [availableTripDates]);
+
+  const effective24hDateObj = useMemo(() => {
+    const todayTrip = availableTripDates.find(d => d.key === currentDateInfo.dateKey);
+    if (todayTrip) return currentDateInfo.dateObj;
+    if (latestUploadedDateItem) return latestUploadedDateItem.dateObj;
+    return currentDateInfo.dateObj;
+  }, [availableTripDates, currentDateInfo, latestUploadedDateItem]);
+
+  const effective24hLabel = useMemo(() => {
+    return effective24hDateObj.toLocaleDateString('en-GB', {
+      day: '2-digit',
+      month: 'short',
+      year: 'numeric',
+    });
+  }, [effective24hDateObj]);
+
+  const effectiveTillDateLabel = useMemo(() => {
+    if (latestUploadedDateItem) {
+      return latestUploadedDateItem.dateObj.toLocaleDateString('en-GB', {
+        day: '2-digit',
+        month: 'short',
+        year: 'numeric',
+      });
+    }
+    return currentDateInfo.formattedLabel;
+  }, [latestUploadedDateItem, currentDateInfo]);
+
   // Scoped trips respecting both client selection and BA Report date filter
   const baScopedTrips = useMemo(() => {
-    if (baReportSelectedDate === 'all') return scopedTrips;
-    if (baReportSelectedDate === 'till_date') {
-      const todayEnd = new Date(currentDateInfo.year, currentDateInfo.month, currentDateInfo.day, 23, 59, 59, 999).getTime();
+    if (baReportSelectedDate === 'all' || baReportSelectedDate === 'till_date') {
+      return scopedTrips;
+    }
+    if (baReportSelectedDate === '24h') {
+      const target24hKey = `${effective24hDateObj.getFullYear()}-${(effective24hDateObj.getMonth() + 1).toString().padStart(2, '0')}-${effective24hDateObj.getDate().toString().padStart(2, '0')}`;
       return scopedTrips.filter(t => {
         const d = parseTripDateHelper(t.date || (t as any).deploymentTime);
         if (!d || isNaN(d.getTime())) return false;
-        return d.getTime() <= todayEnd;
+        const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
+        return key === target24hKey;
       });
     }
     return scopedTrips.filter(t => {
@@ -277,7 +278,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
       const key = `${d.getFullYear()}-${(d.getMonth() + 1).toString().padStart(2, '0')}-${d.getDate().toString().padStart(2, '0')}`;
       return key === baReportSelectedDate;
     });
-  }, [scopedTrips, baReportSelectedDate, currentDateInfo]);
+  }, [scopedTrips, baReportSelectedDate, effective24hDateObj]);
 
   // Compute live summary counts strictly respecting selected client filter
   const totalCabsCount = scopedCabs.length;
@@ -711,7 +712,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
                   className="bg-transparent text-xs font-bold text-white pr-2 py-0.5 focus:outline-none cursor-pointer"
                   title="Filter BA Report metrics by specific date"
                 >
-                  <option value="till_date" className="bg-slate-900 text-white">Till Date (Current Data - {currentDateInfo.formattedLabel})</option>
+                  <option value="till_date" className="bg-slate-900 text-white">Till Date (Uploaded: {effectiveTillDateLabel})</option>
+                  <option value="24h" className="bg-slate-900 text-white">Last 24 Hours ({effective24hLabel})</option>
                   <option value="all" className="bg-slate-900 text-white">All Dates ({scopedTrips.length} Trips)</option>
                   {availableTripDates.map(d => (
                     <option key={d.key} value={d.key} className="bg-slate-900 text-white">

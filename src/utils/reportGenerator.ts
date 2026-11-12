@@ -768,7 +768,7 @@ export function parseTripDateHelper(val: any): Date | null {
       may: 4, jun: 5, june: 5, jul: 6, july: 6, aug: 7, august: 7, sep: 8, sept: 8, september: 8,
       oct: 9, october: 9, nov: 10, november: 10, dec: 11, december: 11,
     };
-    const ddMmmYyyy = trimmed.match(/^(\d{1,2})[\/\-\.\s]+([A-Za-z]{3,9})[\/\-\.\s]+(\d{2,4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    const ddMmmYyyy = trimmed.match(/^(\d{1,2})[\/\-\.\s]+([A-Za-z]{3,9})[\/\-\.\s]+(\d{2,4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?)?$/i);
     if (ddMmmYyyy) {
       const day = parseInt(ddMmmYyyy[1], 10);
       const mStr = ddMmmYyyy[2].toLowerCase();
@@ -776,31 +776,43 @@ export function parseTripDateHelper(val: any): Date | null {
       const year = yrRaw < 100 ? 2000 + yrRaw : yrRaw;
       const month = MONTH_MAP[mStr];
       if (month !== undefined) {
-        const hrs = ddMmmYyyy[4] ? parseInt(ddMmmYyyy[4], 10) : 12;
+        let hrs = ddMmmYyyy[4] ? parseInt(ddMmmYyyy[4], 10) : 12;
         const mins = ddMmmYyyy[5] ? parseInt(ddMmmYyyy[5], 10) : 0;
         const secs = ddMmmYyyy[6] ? parseInt(ddMmmYyyy[6], 10) : 0;
+        const ampm = ddMmmYyyy[7] ? ddMmmYyyy[7].toUpperCase() : null;
+        if (ampm === 'PM' && hrs < 12) hrs += 12;
+        if (ampm === 'AM' && hrs === 12) hrs = 0;
         return new Date(year, month, day, hrs, mins, secs);
       }
     }
-    const ddmmyyyy = trimmed.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})(?:\s+(\d{1,2}):(\d{2})(?::(\d{2}))?)?$/);
+    const ddmmyyyy = trimmed.match(/^(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{2,4})(?:[,\s]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?)?$/i);
     if (ddmmyyyy) {
       const day = parseInt(ddmmyyyy[1], 10);
       const month = parseInt(ddmmyyyy[2], 10) - 1;
-      const year = parseInt(ddmmyyyy[3], 10);
-      const hrs = ddmmyyyy[4] ? parseInt(ddmmyyyy[4], 10) : 12;
+      const yrRaw = parseInt(ddmmyyyy[3], 10);
+      const year = yrRaw < 100 ? 2000 + yrRaw : yrRaw;
+      let hrs = ddmmyyyy[4] ? parseInt(ddmmyyyy[4], 10) : 12;
       const mins = ddmmyyyy[5] ? parseInt(ddmmyyyy[5], 10) : 0;
       const secs = ddmmyyyy[6] ? parseInt(ddmmyyyy[6], 10) : 0;
-      return new Date(year, month, day, hrs, mins, secs);
+      const ampm = ddmmyyyy[7] ? ddmmyyyy[7].toUpperCase() : null;
+      if (ampm === 'PM' && hrs < 12) hrs += 12;
+      if (ampm === 'AM' && hrs === 12) hrs = 0;
+      const parsed = new Date(year, month, day, hrs, mins, secs);
+      if (!isNaN(parsed.getTime())) return parsed;
     }
-    const yyyymmdd = trimmed.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:\s+|T)?(\d{1,2})?:?(\d{2})?:?(\d{2})?/);
+    const yyyymmdd = trimmed.match(/^(\d{4})[\/\-\.](\d{1,2})[\/\-\.](\d{1,2})(?:[,\s|T]+(\d{1,2}):(\d{2})(?::(\d{2}))?\s*(AM|PM|am|pm)?)?$/i);
     if (yyyymmdd) {
       const year = parseInt(yyyymmdd[1], 10);
       const month = parseInt(yyyymmdd[2], 10) - 1;
       const day = parseInt(yyyymmdd[3], 10);
-      const hrs = yyyymmdd[4] ? parseInt(yyyymmdd[4], 10) : 12;
+      let hrs = yyyymmdd[4] ? parseInt(yyyymmdd[4], 10) : 12;
       const mins = yyyymmdd[5] ? parseInt(yyyymmdd[5], 10) : 0;
       const secs = yyyymmdd[6] ? parseInt(yyyymmdd[6], 10) : 0;
-      return new Date(year, month, day, hrs, mins, secs);
+      const ampm = yyyymmdd[7] ? yyyymmdd[7].toUpperCase() : null;
+      if (ampm === 'PM' && hrs < 12) hrs += 12;
+      if (ampm === 'AM' && hrs === 12) hrs = 0;
+      const parsed = new Date(year, month, day, hrs, mins, secs);
+      if (!isNaN(parsed.getTime())) return parsed;
     }
     d = new Date(trimmed);
   } else if (typeof val === 'number') {
@@ -1343,6 +1355,7 @@ function calculatePeriodCutoffs(
 
     if (period === 'till_date') {
       startDateCutoff = new Date(2020, 0, 1, 0, 0, 0, 0);
+      endDateCutoff = new Date(2099, 11, 31, 23, 59, 59, 999);
       daysList.push(new Date(refYear, refMonth, refDay, 12, 0, 0, 0));
     } else if (period === '24h') {
       startDateCutoff = new Date(refYear, refMonth, refDay, 0, 0, 0, 0);
