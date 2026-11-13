@@ -493,24 +493,27 @@ export async function processDataSheetUpload(
   let activeCabsSheetName: string | undefined;
   let inactiveCabsSheetName: string | undefined;
 
+  const isCabTab = (name: string) => name.includes('cab') || name.includes('vehicle');
+  const isDriverTab = (name: string) => name.includes('driver');
+  const isInactiveTab = (name: string) => name.includes('inactive') || name.includes('deactive') || name.includes('resigned');
+  const isActiveTab = (name: string) => name.includes('active') && !isInactiveTab(name);
+
   if (uploadType === 'drivers') {
-    activeDriversSheetName = sheetNames.find(s => {
-      const name = s.trim().toLowerCase();
-      return name.includes('active') && !name.includes('inactive') && !name.includes('deactive');
-    });
-    inactiveDriversSheetName = sheetNames.find(s => {
-      const name = s.trim().toLowerCase();
-      return name.includes('inactive') || name.includes('deactive') || name.includes('resigned');
-    });
+    activeDriversSheetName =
+      sheetNames.find(s => { const n = s.trim().toLowerCase(); return isDriverTab(n) && isActiveTab(n) && !isCabTab(n); }) ||
+      sheetNames.find(s => { const n = s.trim().toLowerCase(); return isActiveTab(n) && !isCabTab(n); }) ||
+      sheetNames.find(s => { const n = s.trim().toLowerCase(); return isDriverTab(n) && !isInactiveTab(n) && !isCabTab(n); });
+    inactiveDriversSheetName =
+      sheetNames.find(s => { const n = s.trim().toLowerCase(); return isDriverTab(n) && isInactiveTab(n) && !isCabTab(n); }) ||
+      sheetNames.find(s => { const n = s.trim().toLowerCase(); return isInactiveTab(n) && !isCabTab(n); });
   } else if (uploadType === 'cabs') {
-    activeCabsSheetName = sheetNames.find(s => {
-      const name = s.trim().toLowerCase();
-      return name.includes('active') && !name.includes('inactive') && !name.includes('deactive');
-    });
-    inactiveCabsSheetName = sheetNames.find(s => {
-      const name = s.trim().toLowerCase();
-      return name.includes('inactive') || name.includes('deactive') || name.includes('resigned');
-    });
+    activeCabsSheetName =
+      sheetNames.find(s => { const n = s.trim().toLowerCase(); return isCabTab(n) && isActiveTab(n) && !isDriverTab(n); }) ||
+      sheetNames.find(s => { const n = s.trim().toLowerCase(); return isActiveTab(n) && !isDriverTab(n); }) ||
+      sheetNames.find(s => { const n = s.trim().toLowerCase(); return isCabTab(n) && !isInactiveTab(n) && !isDriverTab(n); });
+    inactiveCabsSheetName =
+      sheetNames.find(s => { const n = s.trim().toLowerCase(); return isCabTab(n) && isInactiveTab(n) && !isDriverTab(n); }) ||
+      sheetNames.find(s => { const n = s.trim().toLowerCase(); return isInactiveTab(n) && !isDriverTab(n); });
   } else {
     const findSheet = (targetType: 'activeDriver' | 'inactiveDriver' | 'activeCab' | 'inactiveCab') => {
       return sheetNames.find(s => {
@@ -1136,15 +1139,16 @@ export async function processDataSheetUpload(
     if (activeDriversSheetName) await parseDriverSheet(activeDriversSheetName, 'active');
     if (inactiveDriversSheetName) await parseDriverSheet(inactiveDriversSheetName, 'inactive');
 
-    // Fallback: If no drivers were parsed yet, check other tabs in this driver file
+    // Fallback: If no drivers were parsed yet, check other non-cab tabs in this driver file
     if (result.driversAdded + result.driversUpdated === 0) {
       for (const sheetName of sheetNames) {
         if (sheetName === activeDriversSheetName || sheetName === inactiveDriversSheetName) continue;
+        const lowerName = sheetName.toLowerCase();
+        if ((lowerName.includes('cab') || lowerName.includes('vehicle')) && !lowerName.includes('driver')) continue;
         const sheet = workbook.Sheets[sheetName];
         if (!sheet) continue;
         const rawRows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
         if (rawRows.length === 0) continue;
-        const lowerName = sheetName.toLowerCase();
         const defaultStatus = (lowerName.includes('inactive') || lowerName.includes('deactive') || lowerName.includes('resigned')) ? 'inactive' : 'active';
         await parseDriverSheet(sheetName, defaultStatus);
       }
@@ -1153,15 +1157,16 @@ export async function processDataSheetUpload(
     if (activeCabsSheetName) await parseCabSheet(activeCabsSheetName, 'active');
     if (inactiveCabsSheetName) await parseCabSheet(inactiveCabsSheetName, 'inactive');
 
-    // Fallback: If no cabs were parsed yet, check other tabs in this cab file
+    // Fallback: If no cabs were parsed yet, check other non-driver tabs in this cab file
     if (result.cabsAdded + result.cabsUpdated === 0) {
       for (const sheetName of sheetNames) {
         if (sheetName === activeCabsSheetName || sheetName === inactiveCabsSheetName) continue;
+        const lowerName = sheetName.toLowerCase();
+        if (lowerName.includes('driver') && !lowerName.includes('cab') && !lowerName.includes('vehicle')) continue;
         const sheet = workbook.Sheets[sheetName];
         if (!sheet) continue;
         const rawRows: any[] = XLSX.utils.sheet_to_json(sheet, { defval: '' });
         if (rawRows.length === 0) continue;
-        const lowerName = sheetName.toLowerCase();
         const defaultStatus = (lowerName.includes('inactive') || lowerName.includes('deactive') || lowerName.includes('resigned')) ? 'inactive' : 'active';
         await parseCabSheet(sheetName, defaultStatus);
       }

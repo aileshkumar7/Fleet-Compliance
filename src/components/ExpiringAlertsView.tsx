@@ -4,16 +4,13 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
+import { fleetStorage } from '../lib/fleetStorage';
 import { Cab, Driver, Client } from '../types';
 import { 
   analyzeCabExpiry, 
   analyzeDriverExpiry, 
-  analyzeCabCompleteExpiry,
-  EntityExpiryAnalysis,
-  CabCompleteExpiryAnalysis
+  EntityExpiryAnalysis
 } from '../utils/expiryEngine';
 import { matchesCabSearch, matchesDriverSearch } from '../utils/searchUtils';
 import { getDriverCabNumber, getCabAssignedDrivers } from '../utils/cabDriverUtils';
@@ -66,42 +63,17 @@ export const ExpiringAlertsView: React.FC = () => {
       setIsLoading(false);
     };
 
-    const unsubCabs = onSnapshot(collection(db, 'cabs'), (snap) => {
-      const items: Cab[] = [];
-      snap.forEach(doc => {
-        const data = doc.data();
-        items.push({ 
-          id: doc.id, 
-          ...data,
-          registrationNumber: data.registrationNumber || data.regNumber || data.vehicleNumber || 'N/A',
-          etsVehicleId: data.etsVehicleId || data.vehicleId || data.id || 'N/A',
-          clientName: data.clientName || data.client || 'N/A',
-        } as Cab);
-      });
+    const unsubCabs = fleetStorage.subscribe<Cab>('cabs', (items) => {
       rawCabs = items;
       applyScope();
     });
 
-    const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snap) => {
-      const items: Driver[] = [];
-      snap.forEach(doc => {
-        const data = doc.data();
-        items.push({ 
-          id: doc.id, 
-          ...data,
-          name: data.name || data.driverName || 'N/A',
-          driverId: data.driverId || data.id || 'N/A',
-          phoneNumbers: data.phoneNumbers || data.phone || data.mobile || data.driverMobileNumber || '',
-          clientName: data.clientName || data.client || 'N/A',
-        } as Driver);
-      });
+    const unsubDrivers = fleetStorage.subscribe<Driver>('drivers', (items) => {
       rawDrivers = items;
       applyScope();
     });
 
-    const unsubClients = onSnapshot(collection(db, 'clients'), (snap) => {
-      const items: Client[] = [];
-      snap.forEach(doc => items.push({ id: doc.id, ...doc.data() } as Client));
+    const unsubClients = fleetStorage.subscribe<Client>('clients', (items) => {
       rawClients = items;
       applyScope();
     });
@@ -151,9 +123,9 @@ export const ExpiringAlertsView: React.FC = () => {
     })
     .filter(d => matchClient(d.clientName, d.clientId));
 
-  // Analyze scoped cabs (including vehicle & both drivers) and drivers (Active + Inactive)
-  const cabAnalyses: CabCompleteExpiryAnalysis[] = scopedCabs
-    .map(c => analyzeCabCompleteExpiry(c, scopedDrivers))
+  // Analyze scoped cabs (ONLY cab/vehicle documents) and drivers (ONLY driver verification documents) strictly
+  const cabAnalyses: EntityExpiryAnalysis<Cab>[] = scopedCabs
+    .map(analyzeCabExpiry)
     .filter(a => a.hasAlert);
 
   const driverAnalyses: EntityExpiryAnalysis<Driver>[] = scopedDrivers
@@ -165,14 +137,14 @@ export const ExpiringAlertsView: React.FC = () => {
   driverAnalyses.sort((a, b) => a.minDaysRemaining - b.minDaysRemaining);
 
   // Active & Inactive Breakdown Counts
-  const activeCabAlerts = cabAnalyses.filter(a => (a.cab.status || '').toLowerCase() === 'active').length;
-  const inactiveCabAlerts = cabAnalyses.filter(a => (a.cab.status || '').toLowerCase() === 'inactive').length;
+  const activeCabAlerts = cabAnalyses.filter(a => (a.entity.status || '').toLowerCase() === 'active').length;
+  const inactiveCabAlerts = cabAnalyses.filter(a => (a.entity.status || '').toLowerCase() === 'inactive').length;
   const activeDriverAlerts = driverAnalyses.filter(a => (a.entity.status || '').toLowerCase() === 'active').length;
   const inactiveDriverAlerts = driverAnalyses.filter(a => (a.entity.status || '').toLowerCase() === 'inactive').length;
 
   // Apply filters
   const filteredCabAnalyses = cabAnalyses.filter(a => {
-    const matchesSearch = matchesCabSearch(a.cab, searchTerm);
+    const matchesSearch = matchesCabSearch(a.entity, searchTerm);
     if (filterType === 'all') return matchesSearch;
     return matchesSearch && a.worstStatus === filterType;
   });
@@ -364,8 +336,10 @@ export const ExpiringAlertsView: React.FC = () => {
                 </div>
               ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredCabAnalyses.map(({ cab, worstStatus, allAlerts, isDoubleDriver, assignedDriversInfo }) => {
+                  {filteredCabAnalyses.map(({ entity: cab, worstStatus, alerts }) => {
                     const isActive = (cab.status || '').toLowerCase() === 'active';
+                    const assignedDriversInfo = getCabAssignedDrivers(cab, drivers);
+                    const isDoubleDriver = assignedDriversInfo.isDoubleDriver;
                     return (
                       <div
                         key={cab.id}
@@ -449,13 +423,13 @@ export const ExpiringAlertsView: React.FC = () => {
                           )}
                         </div>
 
-                        {/* Specific Triggering Document Alerts List */}
+                        {/* Specific Triggering Cab Document Alerts List */}
                         <div className="space-y-1.5 pt-1">
                           <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                            Triggered Expiries (Vehicle & Drivers):
+                            Triggered Cab Document Expiries:
                           </span>
                           <div className="space-y-1.5">
-                            {allAlerts.map((al, idx) => (
+                            {alerts.map((al, idx) => (
                               <div
                                 key={idx}
                                 className={`p-2 rounded-lg text-xs flex items-center justify-between gap-2 border ${

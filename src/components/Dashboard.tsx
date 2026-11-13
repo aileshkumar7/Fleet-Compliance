@@ -8,7 +8,7 @@ import { collection, onSnapshot, query, orderBy, limit, getDocs, writeBatch, doc
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { Driver, Cab, Client, UploadLog, Trip } from '../types';
-import { analyzeCabExpiry, analyzeDriverExpiry, analyzeCabCompleteExpiry } from '../utils/expiryEngine';
+import { analyzeCabExpiry, analyzeDriverExpiry } from '../utils/expiryEngine';
 import { purgeAllDummyData } from '../utils/seedDriversData';
 import { matchesCabSearch, matchesDriverSearch } from '../utils/searchUtils';
 import { getDriverCabNumber, getCabAssignedDrivers } from '../utils/cabDriverUtils';
@@ -404,15 +404,15 @@ export const Dashboard: React.FC<DashboardProps> = ({
   const activeDrivers = filteredDrivers.filter(d => (d.status || '').toLowerCase() === 'active');
   const inactiveDrivers = filteredDrivers.filter(d => (d.status || '').toLowerCase() === 'inactive');
 
-  // Compute document expiry alerts across all scoped cabs (including vehicle & both drivers) and drivers
+  // Compute document expiry alerts strictly per entity (cab docs on cabs, driver docs on drivers)
   const activeCabAlertsCount = scopedCabs
     .filter(c => (c.status || '').toLowerCase() === 'active')
-    .map(c => analyzeCabCompleteExpiry(c, scopedDrivers))
+    .map(analyzeCabExpiry)
     .filter(a => a.hasAlert).length;
 
   const inactiveCabAlertsCount = scopedCabs
     .filter(c => (c.status || '').toLowerCase() === 'inactive')
-    .map(c => analyzeCabCompleteExpiry(c, scopedDrivers))
+    .map(analyzeCabExpiry)
     .filter(a => a.hasAlert).length;
 
   const cabAlertsCount = activeCabAlertsCount + inactiveCabAlertsCount;
@@ -1230,8 +1230,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
               ) : (
                 <div className="space-y-3">
                   {activeCabs.map((cab) => {
-                    const expiryAudit = analyzeCabCompleteExpiry(cab, scopedDrivers);
-                    const isDouble = expiryAudit.isDoubleDriver;
+                    const expiryAudit = analyzeCabExpiry(cab);
+                    const assignedDriversInfo = getCabAssignedDrivers(cab, scopedDrivers);
+                    const isDouble = assignedDriversInfo.isDoubleDriver;
 
                     return (
                       <div
@@ -1279,10 +1280,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           </div>
                         </div>
 
-                        {/* Triggered Expiry Alerts Messages (Vehicle + Driver 1 + Driver 2) */}
+                        {/* Triggered Cab Document Expiry Alerts Messages */}
                         {expiryAudit.hasAlert && (
                           <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl space-y-1">
-                            {expiryAudit.allAlerts.map((al, idx) => (
+                            {expiryAudit.alerts.map((al, idx) => (
                               <div key={idx} className="flex items-center justify-between text-[11px] font-semibold text-rose-900">
                                 <span className="flex items-center gap-1">
                                   <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />
@@ -1300,9 +1301,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             <div className="flex items-center gap-1.5 text-slate-700 font-medium">
                               <span className="w-4 h-4 rounded bg-blue-100 text-blue-700 text-[9px] font-bold flex items-center justify-center">1</span>
                               <span className="text-slate-400">Driver 1:</span>
-                              <span className="font-bold text-slate-800">{expiryAudit.assignedDriversInfo.primaryResolvedName}</span>
-                              {expiryAudit.assignedDriversInfo.primaryResolvedPhone && (
-                                <span className="text-slate-500 font-mono text-[11px]">({expiryAudit.assignedDriversInfo.primaryResolvedPhone})</span>
+                              <span className="font-bold text-slate-800">{assignedDriversInfo.primaryResolvedName}</span>
+                              {assignedDriversInfo.primaryResolvedPhone && (
+                                <span className="text-slate-500 font-mono text-[11px]">({assignedDriversInfo.primaryResolvedPhone})</span>
                               )}
                             </div>
 
@@ -1310,9 +1311,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               <div className="flex items-center gap-1.5 text-purple-950 font-medium">
                                 <span className="w-4 h-4 rounded bg-purple-200 text-purple-800 text-[9px] font-bold flex items-center justify-center">2</span>
                                 <span className="text-purple-600">Co-Driver:</span>
-                                <span className="font-bold text-purple-900">{expiryAudit.assignedDriversInfo.secondaryResolvedName}</span>
-                                {expiryAudit.assignedDriversInfo.secondaryResolvedPhone && (
-                                  <span className="text-purple-700 font-mono text-[11px]">({expiryAudit.assignedDriversInfo.secondaryResolvedPhone})</span>
+                                <span className="font-bold text-purple-900">{assignedDriversInfo.secondaryResolvedName}</span>
+                                {assignedDriversInfo.secondaryResolvedPhone && (
+                                  <span className="text-purple-700 font-mono text-[11px]">({assignedDriversInfo.secondaryResolvedPhone})</span>
                                 )}
                               </div>
                             )}
@@ -1349,8 +1350,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
               ) : (
                 <div className="space-y-3">
                   {inactiveCabs.map((cab) => {
-                    const expiryAudit = analyzeCabCompleteExpiry(cab, scopedDrivers);
-                    const isDouble = expiryAudit.isDoubleDriver;
+                    const expiryAudit = analyzeCabExpiry(cab);
+                    const assignedDriversInfo = getCabAssignedDrivers(cab, scopedDrivers);
+                    const isDouble = assignedDriversInfo.isDoubleDriver;
 
                     return (
                       <div
@@ -1384,7 +1386,7 @@ export const Dashboard: React.FC<DashboardProps> = ({
                               <span>{cab.overallComplianceStatus || 'Inactive'}</span>
                             </span>
 
-                            {/* Alert Badge if Expiry Exists */}
+                            {/* Alert Badge if Cab Document Expiry Exists */}
                             {expiryAudit.hasAlert && (
                               <span className="inline-flex items-center gap-1.5 bg-rose-600 text-white px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider shadow-2xs animate-pulse">
                                 <span className="relative flex h-1.5 w-1.5">
@@ -1397,10 +1399,10 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           </div>
                         </div>
 
-                        {/* Triggered Expiry Alerts Messages */}
+                        {/* Triggered Cab Document Expiry Alerts Messages */}
                         {expiryAudit.hasAlert && (
                           <div className="p-2.5 bg-rose-50 border border-rose-200 rounded-xl space-y-1">
-                            {expiryAudit.allAlerts.map((al, idx) => (
+                            {expiryAudit.alerts.map((al, idx) => (
                               <div key={idx} className="flex items-center justify-between text-[11px] font-semibold text-rose-900">
                                 <span className="flex items-center gap-1">
                                   <AlertTriangle className="w-3 h-3 text-rose-600 shrink-0" />
@@ -1416,9 +1418,9 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           <div className="flex items-center justify-between text-slate-700">
                             <div className="flex items-center gap-1.5 font-medium">
                               <span className="text-slate-400">Assigned Driver:</span>
-                              <span className="font-bold text-slate-800">{expiryAudit.assignedDriversInfo.primaryResolvedName}</span>
+                              <span className="font-bold text-slate-800">{assignedDriversInfo.primaryResolvedName}</span>
                               {isDouble && (
-                                <span className="text-purple-700 font-bold ml-1">• Co-Driver: {expiryAudit.assignedDriversInfo.secondaryResolvedName}</span>
+                                <span className="text-purple-700 font-bold ml-1">• Co-Driver: {assignedDriversInfo.secondaryResolvedName}</span>
                               )}
                             </div>
                             {cab.deactivationDate && (

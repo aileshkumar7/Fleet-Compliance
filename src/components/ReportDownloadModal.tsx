@@ -4,9 +4,8 @@
  */
 
 import React, { useState, useEffect } from 'react';
-import { collection, getDocs } from 'firebase/firestore';
-import { db } from '../lib/firebase';
 import { Cab, Driver, Client } from '../types';
+import { fleetStorage } from '../lib/fleetStorage';
 import { useAuth } from '../context/AuthContext';
 import { exportFleetExcelReport, ReportFilterOptions } from '../utils/reportGenerator';
 import { analyzeCabExpiry, analyzeDriverExpiry } from '../utils/expiryEngine';
@@ -63,32 +62,23 @@ export const ReportDownloadModal: React.FC<ReportDownloadModalProps> = ({
   useEffect(() => {
     if (!isOpen) return;
 
-    const fetchData = async () => {
-      setIsLoadingData(true);
-      try {
-        const cabSnap = await getDocs(collection(db, 'cabs'));
-        const cabList: Cab[] = [];
-        cabSnap.forEach(d => cabList.push({ id: d.id, ...d.data() } as Cab));
+    setIsLoadingData(true);
+    const unsubCabs = fleetStorage.subscribe<Cab>('cabs', (items) => {
+      setCabs(items);
+      setIsLoadingData(false);
+    });
+    const unsubDrivers = fleetStorage.subscribe<Driver>('drivers', (items) => {
+      setDrivers(items);
+    });
+    const unsubClients = fleetStorage.subscribe<Client>('clients', (items) => {
+      setClients(items);
+    });
 
-        const driverSnap = await getDocs(collection(db, 'drivers'));
-        const driverList: Driver[] = [];
-        driverSnap.forEach(d => driverList.push({ id: d.id, ...d.data() } as Driver));
-
-        const clientSnap = await getDocs(collection(db, 'clients'));
-        const clientList: Client[] = [];
-        clientSnap.forEach(d => clientList.push({ id: d.id, ...d.data() } as Client));
-
-        setCabs(cabList);
-        setDrivers(driverList);
-        setClients(clientList);
-      } catch (err) {
-        console.error('Error loading report modal data:', err);
-      } finally {
-        setIsLoadingData(false);
-      }
+    return () => {
+      unsubCabs();
+      unsubDrivers();
+      unsubClients();
     };
-
-    fetchData();
   }, [isOpen]);
 
   if (!isOpen) return null;

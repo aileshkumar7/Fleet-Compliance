@@ -31,8 +31,7 @@ import { CabsList } from './components/CabsList';
 import { ClientsList } from './components/ClientsList';
 import { Dashboard } from './components/Dashboard';
 import { ExpiringAlertsView } from './components/ExpiringAlertsView';
-import { collection, onSnapshot } from 'firebase/firestore';
-import { db } from './lib/firebase';
+import { fleetStorage } from './lib/fleetStorage';
 import { Cab, Driver, Client } from './types';
 import { analyzeCabExpiry, analyzeDriverExpiry } from './utils/expiryEngine';
 import { resolveUserClientScope, isRecordAccessible } from './utils/clientUtils';
@@ -45,7 +44,7 @@ export default function App() {
   const [isMyAccessOpen, setIsMyAccessOpen] = useState<boolean>(false);
   const [availableClients, setAvailableClients] = useState<Client[]>([]);
 
-  // Expiry alerts real-time counter
+  // Expiry alerts real-time counter via shared fleetStorage listener + local cache
   useEffect(() => {
     if (!user) return;
 
@@ -64,38 +63,27 @@ export default function App() {
       setAlertCount(cAlerts + dAlerts);
     };
 
-    const unsubClients = onSnapshot(collection(db, 'clients'), (snap) => {
-      clientsList = [];
-      snap.forEach(doc => clientsList.push({ id: doc.id, ...doc.data() } as Client));
-      setAvailableClients(clientsList);
+    const unsubClients = fleetStorage.subscribe<Client>('clients', (items) => {
+      clientsList = items;
+      setAvailableClients(items);
       updateCounts();
     });
 
-    const unsubCabs = onSnapshot(collection(db, 'cabs'), (snap) => {
-      cabsList = [];
-      snap.forEach(doc => {
-        const data = doc.data();
-        cabsList.push({ 
-          id: doc.id, 
-          ...data,
-          registrationNumber: data.registrationNumber || data.regNumber || data.vehicleNumber || 'N/A',
-          clientName: data.clientName || data.client || 'N/A',
-        } as Cab);
-      });
+    const unsubCabs = fleetStorage.subscribe<Cab>('cabs', (items) => {
+      cabsList = items.map(data => ({
+        ...data,
+        registrationNumber: data.registrationNumber || (data as any).regNumber || (data as any).vehicleNumber || 'N/A',
+        clientName: data.clientName || (data as any).client || 'N/A',
+      }));
       updateCounts();
     });
 
-    const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snap) => {
-      driversList = [];
-      snap.forEach(doc => {
-        const data = doc.data();
-        driversList.push({ 
-          id: doc.id, 
-          ...data,
-          name: data.name || data.driverName || 'N/A',
-          clientName: data.clientName || data.client || 'N/A',
-        } as Driver);
-      });
+    const unsubDrivers = fleetStorage.subscribe<Driver>('drivers', (items) => {
+      driversList = items.map(data => ({
+        ...data,
+        name: data.name || (data as any).driverName || 'N/A',
+        clientName: data.clientName || (data as any).client || 'N/A',
+      }));
       updateCounts();
     });
 

@@ -72,6 +72,23 @@ export function parseExpiryDate(dateStr: string | null | undefined): Date | null
     if (!isNaN(d.getTime())) return d;
   }
 
+  // Match DD-MMM-YYYY or DD-MMM-YY (e.g., 25-Nov-2026 or 25-Nov-26)
+  const dMmmY = trimmed.match(/^(\d{1,2})[\s\/\-\.]([a-zA-Z]{3,9})[\s\/\-\.](\d{2,4})$/);
+  if (dMmmY) {
+    const day = parseInt(dMmmY[1], 10);
+    const monthStr = dMmmY[2].substring(0, 3).toLowerCase();
+    let year = parseInt(dMmmY[3], 10);
+    if (year < 100) year += 2000;
+    const monthsMap: Record<string, number> = {
+      jan: 0, feb: 1, mar: 2, apr: 3, may: 4, jun: 5,
+      jul: 6, aug: 7, sep: 8, oct: 9, nov: 10, dec: 11
+    };
+    if (monthsMap[monthStr] !== undefined) {
+      const d = new Date(year, monthsMap[monthStr], day);
+      if (!isNaN(d.getTime())) return d;
+    }
+  }
+
   // Try standard Date parsing with local midnight normalization
   const parsed = new Date(trimmed);
   if (!isNaN(parsed.getTime())) {

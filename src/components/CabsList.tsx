@@ -8,7 +8,8 @@ import { collection, onSnapshot, query, deleteDoc, doc } from 'firebase/firestor
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { Cab, Client, Driver } from '../types';
-import { analyzeCabCompleteExpiry } from '../utils/expiryEngine';
+import { analyzeCabExpiry } from '../utils/expiryEngine';
+import { getCabAssignedDrivers } from '../utils/cabDriverUtils';
 import { matchesCabSearch } from '../utils/searchUtils';
 import { runCabDeduplicationCleanup, CabCleanupReport } from '../utils/cabDeduplicator';
 import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
@@ -293,7 +294,7 @@ export const CabsList: React.FC = () => {
                   <th className="px-6 py-3.5">Vehicle Details</th>
                   <th className="px-6 py-3.5">Client & Type</th>
                   <th className="px-6 py-3.5">Assigned Drivers (Primary & Co-Driver)</th>
-                  <th className="px-6 py-3.5">Document Expiries (Cab & Drivers)</th>
+                  <th className="px-6 py-3.5">Cab Document Expiries</th>
                   <th className="px-6 py-3.5">Compliance Status</th>
                   <th className="px-4 py-3.5 text-right">Action</th>
                 </tr>
@@ -301,14 +302,17 @@ export const CabsList: React.FC = () => {
               <tbody className="divide-y divide-slate-100 bg-white">
                 {filteredCabs.map((c) => {
                   const isActive = (c.status || '').toLowerCase() === 'active';
-                  const audit = analyzeCabCompleteExpiry(c, drivers);
-                  const isDouble = audit.isDoubleDriver;
+                  const cabAudit = analyzeCabExpiry(c);
+                  const assignedDriversInfo = getCabAssignedDrivers(c, drivers);
+                  const primaryDriver = assignedDriversInfo.primary;
+                  const secondaryDriver = assignedDriversInfo.secondary;
+                  const isDouble = assignedDriversInfo.isDoubleDriver;
 
                   return (
                     <tr
                       key={c.id}
                       className={`transition-colors ${
-                        audit.hasAlert
+                        cabAudit.hasAlert
                           ? (isActive ? 'bg-rose-50/30 hover:bg-rose-50/50' : 'bg-rose-50/40 hover:bg-rose-50/60')
                           : (!isActive ? 'bg-amber-50/20 hover:bg-amber-50/40' : 'hover:bg-slate-50/80')
                       }`}
@@ -352,16 +356,16 @@ export const CabsList: React.FC = () => {
                               <span className="w-4 h-4 rounded bg-blue-100 text-blue-700 text-[9px] font-black flex items-center justify-center shrink-0">
                                 1
                               </span>
-                              <span>{audit.assignedDriversInfo.primaryResolvedName}</span>
-                              {audit.primaryDriver && (
+                              <span>{assignedDriversInfo.primaryResolvedName}</span>
+                              {primaryDriver && (
                                 <span className="text-[10px] bg-slate-100 text-slate-600 px-1.5 py-0.2 rounded font-mono border border-slate-200">
-                                  DL: {audit.primaryDriver.driverLicenseNumber || 'N/A'}
+                                  DL: {primaryDriver.driverLicenseNumber || 'N/A'}
                                 </span>
                               )}
                             </div>
-                            {audit.assignedDriversInfo.primaryResolvedPhone && (
+                            {assignedDriversInfo.primaryResolvedPhone && (
                               <p className="text-[11px] text-slate-500 font-mono pl-5.5">
-                                {audit.assignedDriversInfo.primaryResolvedPhone}
+                                {assignedDriversInfo.primaryResolvedPhone}
                               </p>
                             )}
                           </div>
@@ -373,16 +377,16 @@ export const CabsList: React.FC = () => {
                                 <span className="w-4 h-4 rounded bg-purple-200 text-purple-800 text-[9px] font-black flex items-center justify-center shrink-0">
                                   2
                                 </span>
-                                <span>{audit.assignedDriversInfo.secondaryResolvedName || 'Co-Driver'}</span>
-                                {audit.secondaryDriver && (
+                                <span>{assignedDriversInfo.secondaryResolvedName || 'Co-Driver'}</span>
+                                {secondaryDriver && (
                                   <span className="text-[10px] bg-purple-100 text-purple-800 px-1.5 py-0.2 rounded font-mono border border-purple-200">
-                                    DL: {audit.secondaryDriver.driverLicenseNumber || 'N/A'}
+                                    DL: {secondaryDriver.driverLicenseNumber || 'N/A'}
                                   </span>
                                 )}
                               </div>
-                              {audit.assignedDriversInfo.secondaryResolvedPhone && (
+                              {assignedDriversInfo.secondaryResolvedPhone && (
                                 <p className="text-[11px] text-purple-700/80 font-mono pl-5.5">
-                                  {audit.assignedDriversInfo.secondaryResolvedPhone}
+                                  {assignedDriversInfo.secondaryResolvedPhone}
                                 </p>
                               )}
                             </div>
@@ -390,20 +394,20 @@ export const CabsList: React.FC = () => {
                         </div>
                       </td>
 
-                      {/* Expiries (Cab & Drivers) */}
+                      {/* Cab Document Expiries (Strictly Vehicle Documents Only) */}
                       <td className="px-6 py-4 space-y-1.5 text-[11px]">
                         {/* Vehicle Expiries */}
                         <div className="space-y-0.5 bg-slate-50 p-2 rounded-xl border border-slate-100">
-                          <div className="flex items-center justify-between text-[10px] text-slate-500">
+                          <div className="flex items-center justify-between gap-3 text-[10px] text-slate-500">
                             <span>Insurance: <strong className="font-mono text-slate-700">{c.insuranceExpiryDate || 'N/A'}</strong></span>
                             <span>PUC: <strong className="font-mono text-slate-700">{c.pollutionCertificateExpiryDate || 'N/A'}</strong></span>
                           </div>
                         </div>
 
-                        {/* Driver Expiries & Alerts */}
-                        {audit.hasAlert ? (
+                        {/* Cab Document Expiries & Alerts */}
+                        {cabAudit.hasAlert ? (
                           <div className="space-y-1">
-                            {audit.allAlerts.map((al, idx) => (
+                            {cabAudit.alerts.map((al, idx) => (
                               <div
                                 key={idx}
                                 className={`text-[10px] font-bold font-mono flex items-center gap-1 px-1.5 py-0.5 rounded ${
@@ -420,7 +424,7 @@ export const CabsList: React.FC = () => {
                         ) : (
                           <div className="text-[10px] text-emerald-700 font-semibold flex items-center gap-1">
                             <CheckCircle2 className="w-3.5 h-3.5 text-emerald-600 shrink-0" />
-                            <span>Vehicle & Drivers Verified Valid</span>
+                            <span>All Cab Documents Valid</span>
                           </div>
                         )}
                       </td>
@@ -443,35 +447,14 @@ export const CabsList: React.FC = () => {
                             <span>{c.status || 'Active'}</span>
                           </span>
 
-                          {audit.hasAlert && (
+                          {cabAudit.hasAlert && (
                             <span className="inline-flex items-center gap-1 bg-rose-600 text-white px-2 py-0.5 rounded-full text-[10px] font-black uppercase tracking-wider animate-pulse">
                               <span className="relative flex h-1.5 w-1.5">
                                 <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-rose-200 opacity-75"></span>
                                 <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-white"></span>
                               </span>
-                              <span>{audit.worstStatus === 'expired' ? 'EXPIRED DOC' : 'EXPIRING SOON'}</span>
+                              <span>{cabAudit.worstStatus === 'expired' ? 'EXPIRED DOC' : 'EXPIRING SOON'}</span>
                             </span>
-                          )}
-
-                          {/* Quick breakdown tag */}
-                          {audit.hasAlert && (
-                            <div className="flex flex-wrap gap-1 mt-0.5">
-                              {audit.cabAnalysis.hasAlert && (
-                                <span className="text-[9px] font-bold text-rose-800 bg-rose-100/80 px-1 rounded">
-                                  Vehicle
-                                </span>
-                              )}
-                              {audit.primaryDriverAnalysis?.hasAlert && (
-                                <span className="text-[9px] font-bold text-blue-800 bg-blue-100/80 px-1 rounded">
-                                  Driver 1
-                                </span>
-                              )}
-                              {audit.secondaryDriverAnalysis?.hasAlert && (
-                                <span className="text-[9px] font-bold text-purple-800 bg-purple-100/80 px-1 rounded">
-                                  Driver 2
-                                </span>
-                              )}
-                            </div>
                           )}
                         </div>
                       </td>

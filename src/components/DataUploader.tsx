@@ -24,7 +24,7 @@ import {
   X,
   ShieldAlert
 } from 'lucide-react';
-import { collection, getDocs, addDoc, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
 import { useAuth } from '../context/AuthContext';
 import { Client } from '../types';
@@ -94,20 +94,13 @@ export const DataUploader: React.FC<DataUploaderProps> = ({ onUploadSuccess, onN
   }, [userProfile]);
 
   useEffect(() => {
-    const fetchClients = async () => {
-      try {
-        const snap = await getDocs(collection(db, 'clients'));
-        const items: Client[] = [];
-        snap.forEach(d => items.push({ id: d.id, ...d.data() } as Client));
-        setClients(items);
-        if (!isAdmin && userBoundClientId) {
-          setSelectedClientId(userBoundClientId);
-        }
-      } catch (e) {
-        console.error('Error fetching clients for uploader:', e);
+    const unsubClients = fleetStorage.subscribe<Client>('clients', (items) => {
+      setClients(items);
+      if (!isAdmin && userBoundClientId) {
+        setSelectedClientId(userBoundClientId);
       }
-    };
-    fetchClients();
+    });
+    return () => unsubClients();
   }, [isAdmin, userBoundClientId]);
 
   // Real-time listener for current database count of Drivers and Cabs via fleetStorage (resilient local cache + Firestore)

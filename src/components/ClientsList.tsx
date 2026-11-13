@@ -4,8 +4,9 @@
  */
 
 import React, { useEffect, useState } from 'react';
-import { collection, getDocs, addDoc, deleteDoc, doc, query, onSnapshot } from 'firebase/firestore';
+import { collection, addDoc, deleteDoc, doc } from 'firebase/firestore';
 import { db } from '../lib/firebase';
+import { fleetStorage } from '../lib/fleetStorage';
 import { useAuth } from '../context/AuthContext';
 import { Client, Driver, Cab } from '../types';
 import { resolveUserClientScope, isRecordAccessible } from '../utils/clientUtils';
@@ -42,31 +43,21 @@ export const ClientsList: React.FC = () => {
       setIsLoading(false);
     };
 
-    const unsubClients = onSnapshot(collection(db, 'clients'), (snap) => {
-      const items: Client[] = [];
-      snap.forEach(docSnap => {
-        const data = docSnap.data() as Client;
-        // Exclude unwanted old clients
+    const unsubClients = fleetStorage.subscribe<Client>('clients', (allClients) => {
+      const items = allClients.filter(data => {
         const nameLower = (data.clientName || '').toLowerCase();
-        if (nameLower.includes('tech corp') || nameLower.includes('techcorp') || nameLower.includes('global logistics') || nameLower.includes('alpha retail')) {
-          return;
-        }
-        items.push({ id: docSnap.id, ...data });
+        return !nameLower.includes('tech corp') && !nameLower.includes('techcorp') && !nameLower.includes('global logistics') && !nameLower.includes('alpha retail');
       });
       rawClients = items;
       applyScope();
-    }, err => console.error('Clients listener error:', err));
+    });
 
-    const unsubDrivers = onSnapshot(collection(db, 'drivers'), (snap) => {
-      const dItems: Driver[] = [];
-      snap.forEach(d => dItems.push({ id: d.id, ...d.data() } as Driver));
+    const unsubDrivers = fleetStorage.subscribe<Driver>('drivers', (dItems) => {
       rawDrivers = dItems;
       applyScope();
     });
 
-    const unsubCabs = onSnapshot(collection(db, 'cabs'), (snap) => {
-      const cItems: Cab[] = [];
-      snap.forEach(c => cItems.push({ id: c.id, ...c.data() } as Cab));
+    const unsubCabs = fleetStorage.subscribe<Cab>('cabs', (cItems) => {
       rawCabs = cItems;
       applyScope();
     });
