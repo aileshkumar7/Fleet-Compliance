@@ -161,8 +161,11 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
             <div>
               <div className="flex items-center gap-2">
                 <h2 className="text-2xl font-black font-mono tracking-tight">{cab.registrationNumber || 'N/A'}</h2>
-                <span className="bg-slate-800 text-slate-300 font-mono text-xs px-2.5 py-0.5 rounded-md border border-slate-700">
-                  ETS ID: {cab.etsVehicleId || 'N/A'}
+                <span className="bg-blue-500/20 text-blue-200 text-xs font-semibold px-2.5 py-0.5 rounded-md border border-blue-400/30">
+                  {cab.vehicleOwnership || 'N/A'}
+                </span>
+                <span className="bg-slate-800 text-slate-200 text-xs px-2.5 py-0.5 rounded-md border border-slate-700">
+                  Owner: {cab.comments || 'N/A'}
                 </span>
               </div>
               <p className="text-xs text-slate-400 mt-1">
@@ -191,12 +194,20 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
           </div>
 
           <div className="space-y-3.5">
-            {/* ETS Vehicle ID */}
+            {/* Vehicle Ownership */}
             <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
               <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                ETS Vehicle ID
+                Vehicle Ownership
               </label>
-              <div className="text-sm font-semibold font-mono text-slate-900">{cab.etsVehicleId || 'N/A'}</div>
+              <div className="text-sm font-semibold text-slate-900">{cab.vehicleOwnership || 'N/A'}</div>
+            </div>
+
+            {/* Owner (Comments) */}
+            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
+              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
+                Owner (Comments)
+              </label>
+              <div className="text-sm font-semibold text-slate-900">{cab.comments || 'N/A'}</div>
             </div>
 
             {/* Registration Number */}
@@ -221,14 +232,6 @@ export const RecordDetailView: React.FC<RecordDetailViewProps> = ({ record, type
                 Fuel Type
               </label>
               <div className="text-sm font-semibold text-slate-900">{cab.fuelType || 'N/A'}</div>
-            </div>
-
-            {/* Vehicle Ownership */}
-            <div className="bg-slate-50 p-3.5 rounded-xl border border-slate-100">
-              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider block mb-1">
-                Vehicle Ownership
-              </label>
-              <div className="text-sm font-semibold text-slate-900">{cab.vehicleOwnership || 'N/A'}</div>
             </div>
 
             {/* Manufacturing / Registration Date */}

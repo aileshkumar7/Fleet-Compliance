@@ -370,9 +370,14 @@ export const ExpiringAlertsView: React.FC = () => {
                                 </span>
                               )}
                             </div>
-                            <div className="flex items-center gap-2 mt-0.5 font-mono text-[11px] text-slate-500">
-                              <span className="bg-slate-100 px-1.5 py-0.5 rounded border border-slate-200">{cab.etsVehicleId}</span>
-                              <span>{cab.vehicleType}</span>
+                            <div className="flex items-center flex-wrap gap-1.5 mt-1 text-[11px] text-slate-600">
+                              <span className="bg-blue-50 text-blue-800 px-2 py-0.5 rounded border border-blue-200 font-semibold" title="Vehicle Ownership">
+                                {cab.vehicleOwnership || 'N/A'}
+                              </span>
+                              <span className="bg-slate-100 text-slate-800 px-2 py-0.5 rounded border border-slate-200 font-medium" title="Owner (Comments)">
+                                Owner: {cab.comments || 'N/A'}
+                              </span>
+                              <span className="font-mono text-slate-500">{cab.vehicleType}</span>
                             </div>
                           </div>
 
@@ -417,7 +422,7 @@ export const ExpiringAlertsView: React.FC = () => {
 
                           {!isActive && cab.comments && (
                             <div className="flex justify-between pt-1 border-t border-slate-200/60 text-[11px]">
-                              <span className="text-amber-700 font-semibold">Note:</span>
+                              <span className="text-amber-700 font-semibold">Owner / Note:</span>
                               <span className="text-slate-700 italic truncate max-w-[200px]">{cab.comments}</span>
                             </div>
                           )}

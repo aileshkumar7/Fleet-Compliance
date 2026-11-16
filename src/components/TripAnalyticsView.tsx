@@ -259,7 +259,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
         targetCab,
         downloadedBy,
         selectedSpecificDate,
-        referenceDateInfo.dateObj
+        referenceDateInfo.dateObj,
+        cabs
       );
       setExportSuccessMsg(`Summary report downloaded: ${result.fileName} (${result.recordCount} cabs)`);
       setTimeout(() => setExportSuccessMsg(null), 6000);
@@ -280,7 +281,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
         targetCab,
         downloadedBy,
         selectedSpecificDate,
-        referenceDateInfo.dateObj
+        referenceDateInfo.dateObj,
+        cabs
       );
       setExportSuccessMsg(`Detailed report downloaded: ${result.fileName} (${result.recordCount} trips)`);
       setTimeout(() => setExportSuccessMsg(null), 6000);
@@ -1319,7 +1321,8 @@ export const TripAnalyticsView: React.FC<{ onNavigateToTripUpload?: () => void }
       const res = await exportBABoardingSummaryReport(
         activePeriodTrips,
         userProfile?.name || userProfile?.email || 'Fleet Admin',
-        selectedClientFilter
+        selectedClientFilter,
+        cabs
       );
       setExportSuccessMsg(`Successfully generated ${res.fileName} with ${res.recordCount} trips.`);
     } catch (err: any) {

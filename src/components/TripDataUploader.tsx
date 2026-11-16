@@ -32,6 +32,7 @@ import {
 } from 'lucide-react';
 import { parseAndUploadTripData, generateSampleBATripReportTemplate, TripUploadSummary, classifyNotBoardingReason, getTripBoardingClassification } from '../utils/tripParser';
 import { exportBABoardingSummaryReport } from '../utils/reportGenerator';
+import { fleetStorage } from '../lib/fleetStorage';
 import { runCabDeduplicationCleanup } from '../utils/cabDeduplicator';
 import { collection, onSnapshot, query, orderBy, limit, getDocs, writeBatch } from 'firebase/firestore';
 import { db } from '../lib/firebase';
@@ -113,7 +114,9 @@ export const TripDataUploader: React.FC<TripDataUploaderProps> = ({ onNavigateTo
       }
       await exportBABoardingSummaryReport(
         allTrips,
-        userProfile?.name || userProfile?.email || 'Fleet Operations'
+        userProfile?.name || userProfile?.email || 'Fleet Operations',
+        undefined,
+        fleetStorage.getSnapshot('cabs')
       );
     } catch (err: any) {
       console.error('Export summary report error:', err);

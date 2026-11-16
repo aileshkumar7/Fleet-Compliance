@@ -61,6 +61,23 @@ function matchStatus(recordStatus?: string, filterValue?: string): boolean {
   return (recordStatus || '').toLowerCase() === filterValue.toLowerCase();
 }
 
+function findCabByReg(cabs: Cab[], reg?: string): Cab | undefined {
+  if (!reg || !cabs || cabs.length === 0) return undefined;
+  const norm = normalizeRegistration(reg);
+  if (!norm) return undefined;
+  return (
+    cabs.find(c => (c.status || '').toLowerCase() === 'active' && normalizeRegistration(c.registrationNumber) === norm) ||
+    cabs.find(c => normalizeRegistration(c.registrationNumber) === norm)
+  );
+}
+
+function getDriverMatchedCab(driver: Driver, cabs: Cab[]): Cab | undefined {
+  if (!cabs || cabs.length === 0) return undefined;
+  const cabNo = getDriverCabNumber(driver, cabs);
+  if (!cabNo || cabNo === 'Unassigned') return undefined;
+  return findCabByReg(cabs, cabNo);
+}
+
 /**
  * Formats a list of expiring/expired document alerts as a readable string
  */
@@ -144,7 +161,8 @@ export async function exportFleetExcelReport(
       : (isDouble ? 'Pending driver upload' : 'N/A');
 
     return {
-      'ETS Vehicle ID': cab.etsVehicleId || '',
+      'Vehicle Ownership': cab.vehicleOwnership || 'N/A',
+      'Owner (Comments)': cab.comments || 'N/A',
       'Registration Number': cab.registrationNumber || '',
       'Client ID': cab.clientId || '',
       'Client Name': cab.clientName || '',
@@ -175,9 +193,7 @@ export async function exportFleetExcelReport(
       'Vehicle Age (Years)': cab.ageYears ?? '',
       'Induction Date': cab.inductionDate || '',
       'Fuel Type': cab.fuelType || '',
-      'Vehicle Ownership': cab.vehicleOwnership || '',
       'EHS': cab.ehs || '',
-      'Comments': cab.comments || '',
       'Approved By': cab.approvedBy || '',
       'Created Time': cab.createdTime || '',
     };
@@ -188,11 +204,14 @@ export async function exportFleetExcelReport(
     const analysis = analyzeDriverExpiry(driver);
     const alertLabel = analysis.worstStatus === 'expired' ? 'Expired' : analysis.worstStatus === 'expiring_soon' ? 'Expiring Soon' : 'OK';
     const expiringDocsText = formatExpiringDocsSummary(analysis.alerts);
+    const matchedCab = getDriverMatchedCab(driver, cabs);
 
     return {
       'Driver ID': driver.driverId || '',
       'Driver Name': driver.name || '',
       'Assigned Cab No': getDriverCabNumber(driver, cabs),
+      'Vehicle Ownership': matchedCab?.vehicleOwnership || 'N/A',
+      'Owner (Comments)': matchedCab?.comments || driver.comments || 'N/A',
       'Client ID': driver.clientId || '',
       'Client Name': driver.clientName || '',
       'Status': driver.status || 'active',
@@ -286,7 +305,8 @@ export async function exportRecordExcelReport(
       : '';
 
     const detailsRow = [{
-      'ETS Vehicle ID': cab.etsVehicleId || '',
+      'Vehicle Ownership': cab.vehicleOwnership || 'N/A',
+      'Owner (Comments)': cab.comments || 'N/A',
       'Registration Number': cab.registrationNumber || '',
       'Client ID': cab.clientId || '',
       'Client Name': cab.clientName || '',
@@ -315,9 +335,7 @@ export async function exportRecordExcelReport(
       'Fitness Expiry Date': cab.fitnessExpiryDate || '',
       'Vehicle Service Expiry Date': cab.vehicleServiceExpiryDate || '',
       'Fuel Type': cab.fuelType || '',
-      'Vehicle Ownership': cab.vehicleOwnership || '',
       'EHS': cab.ehs || '',
-      'Comments': cab.comments || '',
       'Approved By': cab.approvedBy || '',
       'Created Time': cab.createdTime || '',
     }];
@@ -379,10 +397,13 @@ export async function exportRecordExcelReport(
     const alertLabel = analysis.worstStatus === 'expired' ? 'Expired' : analysis.worstStatus === 'expiring_soon' ? 'Expiring Soon' : 'OK';
     const expiringDocsText = formatExpiringDocsSummary(analysis.alerts);
 
+    const matchedCab = getDriverMatchedCab(driver, cabsList);
     const detailsRow = [{
       'Driver ID': driver.driverId || '',
       'Driver Name': driver.name || '',
       'Assigned Cab No': getDriverCabNumber(driver, cabsList),
+      'Vehicle Ownership': matchedCab?.vehicleOwnership || 'N/A',
+      'Owner (Comments)': matchedCab?.comments || driver.comments || 'N/A',
       'Client ID': driver.clientId || '',
       'Client Name': driver.clientName || '',
       'Status': driver.status || 'active',
@@ -516,7 +537,7 @@ export async function exportRecordPdfReport(
     doc.setTextColor(15, 23, 42);
     doc.setFontSize(13);
     doc.setFont('helvetica', 'bold');
-    doc.text(`CAB RECORD: ${cab.registrationNumber || 'N/A'} (ETS ID: ${cab.etsVehicleId || 'N/A'})`, 18, yPos + 8);
+    doc.text(`CAB RECORD: ${cab.registrationNumber || 'N/A'} (${cab.vehicleOwnership || 'N/A'} | Owner: ${cab.comments || 'N/A'})`, 18, yPos + 8);
 
     doc.setFontSize(9);
     doc.setFont('helvetica', 'normal');
@@ -527,11 +548,12 @@ export async function exportRecordPdfReport(
 
     // Vehicle Specifications Table
     const specsBody = [
-      ['ETS Vehicle ID', cab.etsVehicleId || 'N/A'],
+      ['Vehicle Ownership', cab.vehicleOwnership || 'N/A'],
+      ['Owner (Comments)', cab.comments || 'N/A'],
       ['Registration Number', cab.registrationNumber || 'N/A'],
       ['Client Name (ID)', `${cab.clientName || 'N/A'} (${cab.clientId || 'N/A'})`],
       ['Vehicle Type / Fuel', `${cab.vehicleType || 'N/A'} / ${cab.fuelType || 'N/A'}`],
-      ['Ownership / Age', `${cab.vehicleOwnership || 'N/A'} (${cab.ageYears !== undefined ? cab.ageYears + ' Yrs' : 'N/A'})`],
+      ['Vehicle Age', `${cab.ageYears !== undefined ? cab.ageYears + ' Yrs' : 'N/A'}`],
       ['Manufacturing / Reg Date', `Mfg: ${cab.manufacturingDate || 'N/A'} | Reg: ${cab.registrationDate || 'N/A'}`],
       ['Driver 1 (Primary)', `${resolvedDriverName} (${resolvedDriverPhone || 'N/A'})${assignedInfo.primary?.driverLicenseNumber ? ` [DL: ${assignedInfo.primary.driverLicenseNumber}]` : ''}`],
     ];
@@ -654,12 +676,15 @@ export async function exportRecordPdfReport(
     yPos += 24;
 
     // Driver Personal Info Table
+    const matchedCab = getDriverMatchedCab(driver, cabsList);
     autoTable(doc, {
       startY: yPos,
       head: [['Attribute', 'Details']],
       body: [
         ['Driver Name', driver.name || 'N/A'],
         ['Assigned Cab No', getDriverCabNumber(driver, cabsList)],
+        ['Vehicle Ownership', matchedCab?.vehicleOwnership || 'N/A'],
+        ['Owner (Comments)', matchedCab?.comments || driver.comments || 'N/A'],
         ['Driver ID', driver.driverId || 'N/A'],
         ['Client Name (ID)', `${driver.clientName || 'N/A'} (${driver.clientId || 'N/A'})`],
         ['Phone Number', driver.phoneNumbers || 'N/A'],
@@ -950,7 +975,8 @@ export async function exportTripSummaryReport(
   targetCabReg: string | null,
   downloadedBy: string,
   specificDate?: string | null,
-  referenceDate?: Date | null
+  referenceDate?: Date | null,
+  cabs: Cab[] = []
 ): Promise<{ fileName: string; recordCount: number }> {
   let startDateCutoff: Date;
   let endDateCutoff: Date;
@@ -1005,6 +1031,8 @@ export async function exportTripSummaryReport(
   const cabMap: {
     [reg: string]: {
       registration: string;
+      vehicleOwnership: string;
+      ownerComments: string;
       vehicleType: string;
       tripSet: Set<string>;
       dayTripSets: { [dayKey: string]: Set<string> };
@@ -1033,9 +1061,12 @@ export async function exportTripSummaryReport(
     if (tripCalendarTime >= startOnlyTime && tripCalendarTime <= endOnlyTime) {
       const displayReg = rawReg.trim().toUpperCase();
       if (!cabMap[norm]) {
+        const matchedCab = findCabByReg(cabs, rawReg);
         cabMap[norm] = {
           registration: displayReg,
-          vehicleType: t.vehicleType || 'Cab',
+          vehicleOwnership: matchedCab?.vehicleOwnership || 'N/A',
+          ownerComments: matchedCab?.comments || 'N/A',
+          vehicleType: t.vehicleType || matchedCab?.vehicleType || 'Cab',
           tripSet: new Set<string>(),
           dayTripSets: {},
           latestTripDate: null,
@@ -1060,8 +1091,8 @@ export async function exportTripSummaryReport(
   });
 
   const headers = isSingleDay
-    ? ['Registration', 'Vehicle Type', 'Total Trips', 'Last Trip Date/Time']
-    : ['Registration', 'Vehicle Type', 'Total Trips', ...dayHeaders, 'Last Trip Date/Time'];
+    ? ['Vehicle Ownership', 'Owner (Comments)', 'Registration', 'Vehicle Type', 'Total Trips', 'Last Trip Date/Time']
+    : ['Vehicle Ownership', 'Owner (Comments)', 'Registration', 'Vehicle Type', 'Total Trips', ...dayHeaders, 'Last Trip Date/Time'];
 
   const cabList = Object.values(cabMap).sort((a, b) => b.tripSet.size - a.tripSet.size);
 
@@ -1088,16 +1119,16 @@ export async function exportTripSummaryReport(
       : 'N/A';
 
     if (isSingleDay) {
-      return [cab.registration, cab.vehicleType, cab.tripSet.size, lastTripFormatted];
+      return [cab.vehicleOwnership, cab.ownerComments, cab.registration, cab.vehicleType, cab.tripSet.size, lastTripFormatted];
     } else {
-      return [cab.registration, cab.vehicleType, cab.tripSet.size, ...dayCounts, lastTripFormatted];
+      return [cab.vehicleOwnership, cab.ownerComments, cab.registration, cab.vehicleType, cab.tripSet.size, ...dayCounts, lastTripFormatted];
     }
   });
 
   // Totals Row summing all trips across all cabs
   const totalsRow = isSingleDay
-    ? ['TOTAL', '', grandTotalTrips, '']
-    : ['TOTAL', '', grandTotalTrips, ...dayGrandTotals, ''];
+    ? ['TOTAL', '', '', '', grandTotalTrips, '']
+    : ['TOTAL', '', '', '', grandTotalTrips, ...dayGrandTotals, ''];
 
   const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows, totalsRow]);
 
@@ -1143,7 +1174,8 @@ export async function exportTripDetailedReport(
   targetCabReg: string | null,
   downloadedBy: string,
   specificDate?: string | null,
-  referenceDate?: Date | null
+  referenceDate?: Date | null,
+  cabs: Cab[] = []
 ): Promise<{ fileName: string; recordCount: number }> {
   let startDateCutoff: Date;
   let endDateCutoff: Date;
@@ -1208,6 +1240,8 @@ export async function exportTripDetailedReport(
   const headers = [
     'Trip ID',
     'Date',
+    'Vehicle Ownership',
+    'Owner (Comments)',
     'Registration',
     'Vehicle Type',
     'Direction',
@@ -1231,12 +1265,15 @@ export async function exportTripDetailedReport(
 
     const pickupTime = formatTimeStringHelper(t.actualPickupTime || t.deploymentTime || t.date);
     const dropTime = formatTimeStringHelper(t.actualDropTime);
+    const matchedCab = findCabByReg(cabs, t.registration);
 
     return [
       t.tripId || t.id || 'N/A',
       dateStr,
+      matchedCab?.vehicleOwnership || 'N/A',
+      matchedCab?.comments || 'N/A',
       t.registration || 'N/A',
-      t.vehicleType || 'Cab',
+      t.vehicleType || matchedCab?.vehicleType || 'Cab',
       t.direction || 'N/A',
       t.tripType || 'Standard',
       pickupTime,
@@ -1249,6 +1286,8 @@ export async function exportTripDetailedReport(
 
   const totalsRow = [
     'TOTAL TRIPS: ' + detailedTrips.length,
+    '',
+    '',
     '',
     '',
     '',
@@ -1497,6 +1536,8 @@ export async function exportUtilizationSummaryReport(
       : 'No trips on record';
 
     return {
+      vehicleOwnership: cab.vehicleOwnership || 'N/A',
+      ownerComments: cab.comments || 'N/A',
       registration: cab.registrationNumber || 'N/A',
       vehicleType: cab.vehicleType || 'Standard',
       client: cab.clientName || 'N/A',
@@ -1520,6 +1561,8 @@ export async function exportUtilizationSummaryReport(
   });
 
   const headers = [
+    'Vehicle Ownership',
+    'Owner (Comments)',
     'Registration Number',
     'Vehicle Type',
     'Client',
@@ -1530,6 +1573,8 @@ export async function exportUtilizationSummaryReport(
   ];
 
   const dataRows = cabRows.map((r) => [
+    r.vehicleOwnership,
+    r.ownerComments,
     r.registration,
     r.vehicleType,
     r.client,
@@ -1544,14 +1589,14 @@ export async function exportUtilizationSummaryReport(
 
   // Final Summary Block
   const summaryRows = [
-    ['', '', '', '', '', '', ''],
-    ['--- FLEET UTILIZATION SUMMARY ---', '', '', '', '', '', ''],
-    ['Total Active Cabs', totalActive, '', '', '', '', ''],
-    ['Total Utilized', totalUtilized, '', '', '', '', ''],
-    ['Total Not Utilized', totalNotUtilized, '', '', '', '', ''],
-    ['Utilization %', `${utilizationPct}%`, '', '', '', '', ''],
-    ['Evaluation Scope', specificDate ? `Date: ${specificDate}` : period === 'till_date' ? 'Till Date (Current Data)' : period === '24h' ? '24 Hours' : period === '7d' ? 'Last 7 Days' : 'Last 1 Month', '', '', '', '', ''],
-    ['Reference Anchor Date', effectiveRefDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }), '', '', '', '', ''],
+    ['', '', '', '', '', '', '', '', ''],
+    ['--- FLEET UTILIZATION SUMMARY ---', '', '', '', '', '', '', '', ''],
+    ['Total Active Cabs', totalActive, '', '', '', '', '', '', ''],
+    ['Total Utilized', totalUtilized, '', '', '', '', '', '', ''],
+    ['Total Not Utilized', totalNotUtilized, '', '', '', '', '', '', ''],
+    ['Utilization %', `${utilizationPct}%`, '', '', '', '', '', '', ''],
+    ['Evaluation Scope', specificDate ? `Date: ${specificDate}` : period === 'till_date' ? 'Till Date (Current Data)' : period === '24h' ? '24 Hours' : period === '7d' ? 'Last 7 Days' : 'Last 1 Month', '', '', '', '', '', '', ''],
+    ['Reference Anchor Date', effectiveRefDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }), '', '', '', '', '', '', ''],
   ];
 
   const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows, ...summaryRows]);
@@ -1665,6 +1710,8 @@ export async function exportUtilizationDateWiseReport(
   // 3. Build Date-Wise Rows (sorted chronologically by date, then by cab)
   const headers = [
     'Date',
+    'Vehicle Ownership',
+    'Owner (Comments)',
     'Registration Number',
     'Vehicle Type',
     'Client',
@@ -1698,6 +1745,8 @@ export async function exportUtilizationDateWiseReport(
 
       dataRows.push([
         dateFormatted,
+        cab.vehicleOwnership || 'N/A',
+        cab.comments || 'N/A',
         cab.registrationNumber || 'N/A',
         cab.vehicleType || 'Standard',
         cab.clientName || 'N/A',
@@ -1714,16 +1763,16 @@ export async function exportUtilizationDateWiseReport(
 
   // Summary Block
   const summaryRows = [
-    ['', '', '', '', '', ''],
-    ['--- DATE-WISE UTILIZATION SUMMARY ---', '', '', '', '', ''],
-    ['Total Days Evaluated', daysList.length, '', '', '', ''],
-    ['Total Active Cabs', activeCabs.length, '', '', '', ''],
-    ['Total Cab-Days Evaluated', totalCabDaysEvaluated, '', '', '', ''],
-    ['Total Utilized Cab-Days', totalUtilizedCabDays, '', '', '', ''],
-    ['Total Idle Cab-Days', totalCabDaysEvaluated - totalUtilizedCabDays, '', '', '', ''],
-    ['Daily Fleet Utilization Rate', `${dateWiseUtilRate}%`, '', '', '', ''],
-    ['Evaluation Scope', specificDate ? `Date: ${specificDate}` : period === '24h' ? '24 Hours' : period === '7d' ? 'Last 7 Days' : 'Last 1 Month', '', '', '', ''],
-    ['Reference Anchor Date', effectiveRefDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }), '', '', '', ''],
+    ['', '', '', '', '', '', '', ''],
+    ['--- DATE-WISE UTILIZATION SUMMARY ---', '', '', '', '', '', '', ''],
+    ['Total Days Evaluated', daysList.length, '', '', '', '', '', ''],
+    ['Total Active Cabs', activeCabs.length, '', '', '', '', '', ''],
+    ['Total Cab-Days Evaluated', totalCabDaysEvaluated, '', '', '', '', '', ''],
+    ['Total Utilized Cab-Days', totalUtilizedCabDays, '', '', '', '', '', ''],
+    ['Total Idle Cab-Days', totalCabDaysEvaluated - totalUtilizedCabDays, '', '', '', '', '', ''],
+    ['Daily Fleet Utilization Rate', `${dateWiseUtilRate}%`, '', '', '', '', '', ''],
+    ['Evaluation Scope', specificDate ? `Date: ${specificDate}` : period === '24h' ? '24 Hours' : period === '7d' ? 'Last 7 Days' : 'Last 1 Month', '', '', '', '', '', ''],
+    ['Reference Anchor Date', effectiveRefDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }), '', '', '', '', '', ''],
   ];
 
   const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows, ...summaryRows]);
@@ -1874,6 +1923,8 @@ export async function exportNotUtilizedCabsReport(
       }
 
       return {
+        vehicleOwnership: cab.vehicleOwnership || 'N/A',
+        ownerComments: cab.comments || 'N/A',
         registration: cab.registrationNumber || 'N/A',
         vehicleType: cab.vehicleType || 'Standard',
         client: cab.clientName || 'N/A',
@@ -1894,6 +1945,8 @@ export async function exportNotUtilizedCabsReport(
   });
 
   const headers = [
+    'Vehicle Ownership',
+    'Owner (Comments)',
     'Registration Number',
     'Vehicle Type',
     'Client',
@@ -1902,6 +1955,8 @@ export async function exportNotUtilizedCabsReport(
   ];
 
   const dataRows = notUtilizedList.map((r) => [
+    r.vehicleOwnership,
+    r.ownerComments,
     r.registration,
     r.vehicleType,
     r.client,
@@ -1915,13 +1970,13 @@ export async function exportNotUtilizedCabsReport(
 
   // Final Summary Block
   const summaryRows = [
-    ['', '', '', '', ''],
-    ['--- UNUTILIZED FLEET AUDIT SUMMARY ---', '', '', '', ''],
-    ['Total Active Cabs Evaluated', totalActive, '', '', ''],
-    ['Total Cabs Not Utilized', notUtilizedCount, '', '', ''],
-    ['Unutilized Fleet Share (%)', `${unutilizedPct}%`, '', '', ''],
-    ['Evaluation Scope', specificDate ? `Date: ${specificDate}` : period === 'till_date' ? 'Till Date (Current Data)' : period === '24h' ? '24 Hours' : period === '7d' ? 'Last 7 Days' : 'Last 1 Month', '', '', ''],
-    ['Reference Anchor Date', effectiveRefDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }), '', '', ''],
+    ['', '', '', '', '', '', ''],
+    ['--- UNUTILIZED FLEET AUDIT SUMMARY ---', '', '', '', '', '', ''],
+    ['Total Active Cabs Evaluated', totalActive, '', '', '', '', ''],
+    ['Total Cabs Not Utilized', notUtilizedCount, '', '', '', '', ''],
+    ['Unutilized Fleet Share (%)', `${unutilizedPct}%`, '', '', '', '', ''],
+    ['Evaluation Scope', specificDate ? `Date: ${specificDate}` : period === 'till_date' ? 'Till Date (Current Data)' : period === '24h' ? '24 Hours' : period === '7d' ? 'Last 7 Days' : 'Last 1 Month', '', '', '', '', ''],
+    ['Reference Anchor Date', effectiveRefDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }), '', '', '', '', ''],
   ];
 
   const ws = XLSX.utils.aoa_to_sheet([headers, ...dataRows, ...summaryRows]);
@@ -2076,7 +2131,8 @@ export async function exportTripRosterExcelReport(
 export async function exportBABoardingSummaryReport(
   trips: Trip[],
   downloadedBy: string,
-  clientNameFilter?: string
+  clientNameFilter?: string,
+  cabs: Cab[] = []
 ): Promise<{ fileName: string; recordCount: number }> {
   // 1. Filter trips by client if specified
   const filteredTrips = trips.filter(t => {
@@ -2201,6 +2257,8 @@ export async function exportBABoardingSummaryReport(
   const detailHeaders = [
     'Trip ID',
     'Date',
+    'Vehicle Ownership',
+    'Owner (Comments)',
     'Registration Number',
     'Vehicle Type',
     'Driver Name',
@@ -2221,12 +2279,15 @@ export async function exportBABoardingSummaryReport(
     const dateFormatted = parsedDate ? parsedDate.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) : '';
     const pickupFormatted = t.actualPickupTime ? parseTripDateHelper(t.actualPickupTime)?.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) || '' : '';
     const dropFormatted = t.actualDropTime ? parseTripDateHelper(t.actualDropTime)?.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' }) || '' : '';
+    const matchedCab = findCabByReg(cabs, t.registration);
 
     return [
       t.tripId,
       dateFormatted,
+      matchedCab?.vehicleOwnership || 'N/A',
+      matchedCab?.comments || 'N/A',
       t.registration || 'N/A',
-      t.vehicleType || 'N/A',
+      t.vehicleType || matchedCab?.vehicleType || 'N/A',
       t.driverName || 'N/A',
       t.driverContactNo || 'N/A',
       t.facility || t.clientName || t.clientId || 'N/A',
@@ -2244,6 +2305,8 @@ export async function exportBABoardingSummaryReport(
   wsDetail['!cols'] = [
     { wch: 14 }, // Trip ID
     { wch: 14 }, // Date
+    { wch: 18 }, // Vehicle Ownership
+    { wch: 24 }, // Owner (Comments)
     { wch: 18 }, // Reg
     { wch: 14 }, // Vehicle Type
     { wch: 20 }, // Driver Name

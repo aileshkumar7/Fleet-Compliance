@@ -342,7 +342,8 @@ export const Dashboard: React.FC<DashboardProps> = ({
       const res = await exportBABoardingSummaryReport(
         baScopedTrips,
         userProfile?.name || userProfile?.email || 'Fleet Operations',
-        selectedClient === 'all' ? undefined : selectedClient
+        selectedClient === 'all' ? undefined : selectedClient,
+        cabs
       );
       setBaReportSuccessToast(`Downloaded ${res.fileName} (${res.recordCount} trips included).`);
       setTimeout(() => setBaReportSuccessToast(null), 6000);
@@ -1248,8 +1249,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           <div>
                             <div className="flex items-center gap-2 flex-wrap">
                               <h4 className="font-bold text-slate-900 group-hover:text-blue-600 transition-colors text-base font-mono">{cab.registrationNumber || 'N/A'}</h4>
-                              <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200">
-                                {cab.etsVehicleId}
+                              <span className="text-[10px] font-semibold bg-blue-50 text-blue-800 px-2 py-0.5 rounded border border-blue-200" title="Vehicle Ownership">
+                                {cab.vehicleOwnership || 'N/A'}
+                              </span>
+                              <span className="text-[10px] font-medium bg-slate-100 text-slate-800 px-2 py-0.5 rounded border border-slate-200" title="Owner (Comments)">
+                                Owner: {cab.comments || 'N/A'}
                               </span>
                               {isDouble && (
                                 <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-800 text-[10px] font-black px-2 py-0.5 rounded-md border border-purple-200 uppercase tracking-wider">
@@ -1368,8 +1372,11 @@ export const Dashboard: React.FC<DashboardProps> = ({
                           <div>
                             <div className="flex items-center gap-2 flex-wrap">
                               <h4 className="font-bold text-slate-900 group-hover:text-amber-700 transition-colors text-base font-mono">{cab.registrationNumber || 'N/A'}</h4>
-                              <span className="text-[10px] font-mono bg-slate-100 text-slate-600 px-2 py-0.5 rounded border border-slate-200">
-                                {cab.etsVehicleId}
+                              <span className="text-[10px] font-semibold bg-blue-50 text-blue-800 px-2 py-0.5 rounded border border-blue-200" title="Vehicle Ownership">
+                                {cab.vehicleOwnership || 'N/A'}
+                              </span>
+                              <span className="text-[10px] font-medium bg-slate-100 text-slate-800 px-2 py-0.5 rounded border border-slate-200" title="Owner (Comments)">
+                                Owner: {cab.comments || 'N/A'}
                               </span>
                               {isDouble && (
                                 <span className="inline-flex items-center gap-1 bg-purple-100 text-purple-800 text-[10px] font-black px-2 py-0.5 rounded-md border border-purple-200 uppercase tracking-wider">
@@ -1431,13 +1438,13 @@ export const Dashboard: React.FC<DashboardProps> = ({
                             )}
                           </div>
 
-                          {/* Inactivity Reason / Comments */}
+                          {/* Owner (Comments) & Inactivity Reason */}
                           <div className="p-3 bg-amber-50/70 border border-amber-100 rounded-xl space-y-1">
                             <span className="text-[10px] font-bold text-amber-900 uppercase tracking-wider block">
-                              Inactivity Reason
+                              Owner (Comments) / Inactivity Reason
                             </span>
                             <p className="text-xs text-amber-950 font-medium leading-relaxed">
-                              {cab.comments || 'No specific inactivity comment provided.'}
+                              {cab.inactivityReason || cab.comments || 'No specific inactivity comment provided.'}
                             </p>
                           </div>
                         </div>

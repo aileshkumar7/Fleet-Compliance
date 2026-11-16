@@ -63,9 +63,11 @@ export function matchesCabSearch(cab: Cab, query: string): boolean {
   if ((cab.coDriverName || '').toLowerCase().includes(q)) return true;
   if ((cab.coDriverMobileNumber || '').toLowerCase().includes(q)) return true;
 
-  // 4. Client Name / Vehicle Type / Fuel Type / Contract
+  // 4. Client Name / Vehicle Type / Fuel Type / Ownership / Owner (Comments) / Contract
   if ((cab.clientName || '').toLowerCase().includes(q)) return true;
   if ((cab.vehicleType || '').toLowerCase().includes(q)) return true;
+  if ((cab.vehicleOwnership || '').toLowerCase().includes(q)) return true;
+  if ((cab.comments || '').toLowerCase().includes(q)) return true;
   if ((cab.contractName || '').toLowerCase().includes(q)) return true;
 
   return false;
